@@ -8,6 +8,7 @@ import com.agentcli.tool.builtin.GlobFilesTool;
 import com.agentcli.tool.builtin.GrepCodeTool;
 import com.agentcli.tool.builtin.ListDirTool;
 import com.agentcli.tool.builtin.ReadFileTool;
+import com.agentcli.tool.builtin.WebSearchTool;
 import com.agentcli.tool.builtin.WriteFileTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +47,7 @@ public class ToolRegistry {
         register(new GrepCodeTool(context));
         register(new ExecuteCommandTool(context));
         register(new CreateProjectTool(context));
+        register(new WebSearchTool());
     }
 
     /** 注册一个工具（同名覆盖）。 */
