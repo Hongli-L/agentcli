@@ -97,6 +97,7 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
         int inputTokens = 0;
         int outputTokens = 0;
         int cachedInputTokens = 0;
+        String lastContentDelta = "";
 
         while (!source.exhausted()) {
             String line = source.readUtf8Line();
@@ -153,9 +154,10 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
             }
 
             String contentDelta = delta.path("content").asText("");
-            if (!contentDelta.isEmpty()) {
+            if (!contentDelta.isEmpty() && !contentDelta.equals(lastContentDelta)) {
                 content.append(contentDelta);
                 listener.onContentDelta(contentDelta);
+                lastContentDelta = contentDelta;
             }
 
             mergeToolCallDeltas(toolAccumulators, delta.path("tool_calls"));
