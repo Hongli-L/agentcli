@@ -2,8 +2,6 @@ package com.agentcli.cli;
 
 /**
  * 解析交互式会话中的斜杠命令。
- *
- * 以 {@code /} 开头的输入视为命令；普通文本交给 Agent 处理。
  */
 final class CliCommandParser {
 
@@ -12,7 +10,13 @@ final class CliCommandParser {
         EXIT,
         CLEAR,
         HELP,
-        MODEL
+        MODEL,
+        COMPACT,
+        MEMORY_STATUS,
+        MEMORY_LIST,
+        MEMORY_CLEAR,
+        MEMORY_SEARCH,
+        MEMORY_DELETE
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -43,11 +47,35 @@ final class CliCommandParser {
                 || trimmed.equals("?") || trimmed.equals("/?")) {
             return new ParsedCommand(CommandType.HELP, null);
         }
+        if (trimmed.equalsIgnoreCase("/compact")) {
+            return new ParsedCommand(CommandType.COMPACT, null);
+        }
         if (trimmed.equalsIgnoreCase("/model")) {
             return new ParsedCommand(CommandType.MODEL, null);
         }
         if (trimmed.regionMatches(true, 0, "/model ", 0, 7)) {
             return new ParsedCommand(CommandType.MODEL, trimmed.substring(7).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/memory") || trimmed.equalsIgnoreCase("/mem")) {
+            return new ParsedCommand(CommandType.MEMORY_STATUS, null);
+        }
+        if (trimmed.equalsIgnoreCase("/memory list") || trimmed.equalsIgnoreCase("/mem list")) {
+            return new ParsedCommand(CommandType.MEMORY_LIST, null);
+        }
+        if (trimmed.equalsIgnoreCase("/memory clear") || trimmed.equalsIgnoreCase("/mem clear")) {
+            return new ParsedCommand(CommandType.MEMORY_CLEAR, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/memory search ", 0, 15)) {
+            return new ParsedCommand(CommandType.MEMORY_SEARCH, trimmed.substring(15).trim());
+        }
+        if (trimmed.regionMatches(true, 0, "/mem search ", 0, 12)) {
+            return new ParsedCommand(CommandType.MEMORY_SEARCH, trimmed.substring(12).trim());
+        }
+        if (trimmed.regionMatches(true, 0, "/memory delete ", 0, 15)) {
+            return new ParsedCommand(CommandType.MEMORY_DELETE, trimmed.substring(15).trim());
+        }
+        if (trimmed.regionMatches(true, 0, "/mem delete ", 0, 12)) {
+            return new ParsedCommand(CommandType.MEMORY_DELETE, trimmed.substring(12).trim());
         }
         return ParsedCommand.none();
     }

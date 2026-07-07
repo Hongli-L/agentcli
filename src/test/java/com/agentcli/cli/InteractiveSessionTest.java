@@ -57,6 +57,15 @@ class InteractiveSessionTest {
     }
 
     @Test
+    void memoryStatusCommandPrintsStatus() {
+        agent.getMemoryManager().storeFact("test memory");
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        assertTrue(session.handleCommand(CliCommandParser.parse("/memory"), out));
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("长期记忆"));
+    }
+
+    @Test
     void replExitsOnExitCommand() throws Exception {
         session.run(new java.io.BufferedReader(new StringReader("/exit\n")),
                 new PrintStream(output, true, StandardCharsets.UTF_8));

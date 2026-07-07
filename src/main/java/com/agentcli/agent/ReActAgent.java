@@ -1,9 +1,13 @@
 package com.agentcli.agent;
 
 import com.agentcli.llm.LlmClient;
+import com.agentcli.memory.ConversationHistoryCompactor;
+import com.agentcli.memory.MemoryManager;
+import com.agentcli.memory.TokenBudget;
 import com.agentcli.tool.ToolExecutionResult;
 import com.agentcli.tool.ToolInvocation;
 import com.agentcli.tool.ToolRegistry;
+import com.agentcli.tool.builtin.SaveMemoryTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,16 +17,6 @@ import java.util.List;
 
 /**
  * ReAct Agent 核心：Thought → Action（tool calls）→ Observation → … → Final Answer。
- *
- * 一轮 {@link #run(String)} 的流程：
- * <ol>
- *   <li>把用户输入追加到对话历史</li>
- *   <li>调用 LLM（附带工具定义，支持流式增量回调）</li>
- *   <li>若返回 tool_calls：并行执行工具，把结果以 tool 角色消息写回历史，继续循环</li>
- *   <li>若返回纯文本：作为最终答复返回</li>
- * </ol>
- *
- * {@link AgentBudget} 在 token 用尽、检测到重复工具调用或超出硬轮数时强制收尾。
  */
 public class ReActAgent {
 
@@ -30,6 +24,8 @@ public class ReActAgent {
 
     private LlmClient llmClient;
     private final ToolRegistry toolRegistry;
+    private final MemoryManager memoryManager;
+    private final ConversationHistoryCompactor historyCompactor;
     private final List<LlmClient.Message> conversationHistory = new ArrayList<>();
     private AgentRunListener listener = AgentRunListener.NO_OP;
 
@@ -40,11 +36,17 @@ public class ReActAgent {
     public ReActAgent(LlmClient llmClient, ToolRegistry toolRegistry) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
+        this.memoryManager = new MemoryManager(llmClient);
+        this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+        this.memoryManager.setProjectPath(toolRegistry.getProjectPath());
+        this.toolRegistry.register(new SaveMemoryTool(memoryManager));
         resetHistory();
     }
 
     public void setLlmClient(LlmClient llmClient) {
         this.llmClient = llmClient;
+        memoryManager.setLlmClient(llmClient);
+        historyCompactor.setLlmClient(llmClient);
     }
 
     public void setListener(AgentRunListener listener) {
@@ -55,26 +57,36 @@ public class ReActAgent {
         return toolRegistry;
     }
 
+    public MemoryManager getMemoryManager() {
+        return memoryManager;
+    }
+
     public List<LlmClient.Message> getConversationHistory() {
         return List.copyOf(conversationHistory);
     }
 
-    /** 清空对话历史并重建系统提示，不影响工具注册表配置。 */
     public void clearHistory() {
         resetHistory();
     }
 
-    /**
-     * 执行一轮用户请求，返回最终文本答复。
-     *
-     * 流式 reasoning/content 通过 {@link #setListener(AgentRunListener)} 回调；
-     * 本方法返回值仅为模型最终 answer（不含已流式输出的 reasoning）。
-     */
+    public CompactionResult compactHistoryNow() {
+        int beforeTokens = TokenBudget.estimateMessagesTokens(conversationHistory);
+        try {
+            boolean compacted = historyCompactor.compactNow(conversationHistory);
+            int afterTokens = TokenBudget.estimateMessagesTokens(conversationHistory);
+            return new CompactionResult(compacted, beforeTokens, afterTokens, null);
+        } catch (Exception e) {
+            return new CompactionResult(false, beforeTokens, beforeTokens, e.getMessage());
+        }
+    }
+
     public String run(String userInput) {
         if (userInput == null || userInput.isBlank()) {
             return "";
         }
         log.info("ReAct run started: inputLength={}", userInput.length());
+        memoryManager.setProjectPath(toolRegistry.getProjectPath());
+        updateSystemPrompt(userInput);
         conversationHistory.add(LlmClient.Message.user(userInput));
 
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
@@ -89,6 +101,7 @@ public class ReActAgent {
 
             int iteration = budget.beginIteration();
             listener.onIterationStart(iteration);
+            maybeCompactHistory();
 
             try {
                 List<LlmClient.Tool> toolDefinitions = llmClient.supportsTools()
@@ -129,6 +142,11 @@ public class ReActAgent {
 
                 String answer = response.content() == null ? "" : response.content().trim();
                 conversationHistory.add(LlmClient.Message.assistant(answer));
+                memoryManager.recordTokenUsage(
+                        budget.totalInputTokens(),
+                        budget.totalOutputTokens(),
+                        budget.totalCachedInputTokens()
+                );
                 log.info("ReAct run finished: iterations={}, inputTokens={}, outputTokens={}",
                         budget.iteration(), budget.totalInputTokens(), budget.totalOutputTokens());
                 return answer;
@@ -137,6 +155,23 @@ public class ReActAgent {
                 log.error("LLM call failed in ReAct loop", e);
                 return "❌ 调用 LLM 失败: " + e.getMessage();
             }
+        }
+    }
+
+    private void updateSystemPrompt(String userQuery) {
+        String memoryContext = memoryManager.buildContextForQuery(userQuery);
+        conversationHistory.set(0, LlmClient.Message.system(
+                SystemPrompt.forAgent(toolRegistry, memoryContext)));
+    }
+
+    private void maybeCompactHistory() {
+        try {
+            int trigger = memoryManager.getTokenBudget().compressionTriggerTokens();
+            if (historyCompactor.compactIfNeeded(conversationHistory, trigger)) {
+                log.info("Conversation history compacted before LLM call");
+            }
+        } catch (Exception e) {
+            log.warn("conversation history compaction failed", e);
         }
     }
 
@@ -158,5 +193,8 @@ public class ReActAgent {
     private void resetHistory() {
         conversationHistory.clear();
         conversationHistory.add(LlmClient.Message.system(SystemPrompt.forAgent(toolRegistry)));
+    }
+
+    public record CompactionResult(boolean compacted, int beforeTokens, int afterTokens, String error) {
     }
 }

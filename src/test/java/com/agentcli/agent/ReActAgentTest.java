@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -113,6 +114,25 @@ class ReActAgentTest {
         assertEquals("list_dir", recording.toolCallBatches.get(0).get(0).function().name());
         assertEquals(1, recording.toolResults.size());
         assertEquals("list_dir", recording.toolResults.get(0).name());
+    }
+
+    @Test
+    void memoryInjectionInSystemPrompt() {
+        agent.getMemoryManager().storeFact("always use Spring Boot 3");
+        llm.enqueue(new LlmClient.ChatResponse("assistant", "ok", null, List.of(), 1, 1));
+
+        agent.run("Spring Boot version?");
+
+        String systemContent = agent.getConversationHistory().get(0).content();
+        assertTrue(systemContent.contains("Spring Boot 3"), systemContent);
+    }
+
+    @Test
+    void saveMemoryToolIsRegistered() {
+        Set<String> names = toolRegistry.getToolDefinitions().stream()
+                .map(LlmClient.Tool::name)
+                .collect(java.util.stream.Collectors.toSet());
+        assertTrue(names.contains("save_memory"));
     }
 
     @Test

@@ -30,6 +30,22 @@ class CliCommandParserTest {
     }
 
     @Test
+    void memoryCommands() {
+        assertEquals(CliCommandParser.CommandType.MEMORY_STATUS, CliCommandParser.parse("/memory").type());
+        assertEquals(CliCommandParser.CommandType.MEMORY_LIST, CliCommandParser.parse("/mem list").type());
+        assertEquals(CliCommandParser.CommandType.MEMORY_CLEAR, CliCommandParser.parse("/memory clear").type());
+        assertEquals(CliCommandParser.CommandType.COMPACT, CliCommandParser.parse("/compact").type());
+
+        var search = CliCommandParser.parse("/memory search deploy");
+        assertEquals(CliCommandParser.CommandType.MEMORY_SEARCH, search.type());
+        assertEquals("deploy", search.payload());
+
+        var delete = CliCommandParser.parse("/mem delete fact-abc");
+        assertEquals(CliCommandParser.CommandType.MEMORY_DELETE, delete.type());
+        assertEquals("fact-abc", delete.payload());
+    }
+
+    @Test
     void plainTextIsNotCommand() {
         assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("explain this code").type());
     }

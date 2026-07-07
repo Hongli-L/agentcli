@@ -4,6 +4,7 @@ import com.agentcli.agent.ReActAgent;
 import com.agentcli.common.AppConfig;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.memory.MemoryEntry;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -83,8 +84,75 @@ public class InteractiveSession {
                 switchModel(command.payload(), out);
                 yield true;
             }
+            case COMPACT -> {
+                ReActAgent.CompactionResult result = agent.compactHistoryNow();
+                if (result.error() != null) {
+                    out.println("压缩失败: " + result.error());
+                } else if (result.compacted()) {
+                    out.println(String.format("已压缩对话历史: %d -> %d tokens",
+                            result.beforeTokens(), result.afterTokens()));
+                } else {
+                    out.println("当前上下文无需压缩。");
+                }
+                yield true;
+            }
+            case MEMORY_STATUS -> {
+                out.println(agent.getMemoryManager().getSystemStatus());
+                yield true;
+            }
+            case MEMORY_LIST -> {
+                printMemoryList(out);
+                yield true;
+            }
+            case MEMORY_CLEAR -> {
+                agent.getMemoryManager().clearLongTerm();
+                out.println("长期记忆已清空。");
+                yield true;
+            }
+            case MEMORY_SEARCH -> {
+                printMemorySearch(command.payload(), out);
+                yield true;
+            }
+            case MEMORY_DELETE -> {
+                boolean deleted = agent.getMemoryManager().deleteLongTerm(command.payload());
+                out.println(deleted ? "已删除记忆: " + command.payload() : "未找到记忆: " + command.payload());
+                yield true;
+            }
             case NONE -> false;
         };
+    }
+
+    private void printMemoryList(PrintStream out) {
+        var entries = agent.getMemoryManager().listLongTerm();
+        if (entries.isEmpty()) {
+            out.println("长期记忆为空。");
+            return;
+        }
+        out.println("长期记忆 (" + entries.size() + " 条):");
+        for (MemoryEntry entry : entries) {
+            out.printf("  [%s] %s (%s)%n", entry.getId(), entry.getContent(),
+                    longTermMemoryScope(entry));
+        }
+    }
+
+    private void printMemorySearch(String query, PrintStream out) {
+        if (query == null || query.isBlank()) {
+            out.println("用法: /memory search <关键词>");
+            return;
+        }
+        var entries = agent.getMemoryManager().searchLongTerm(query, 10);
+        if (entries.isEmpty()) {
+            out.println("未找到匹配记忆。");
+            return;
+        }
+        out.println("搜索 \"" + query + "\" 命中 " + entries.size() + " 条:");
+        for (MemoryEntry entry : entries) {
+            out.printf("  [%s] %s%n", entry.getId(), entry.getContent());
+        }
+    }
+
+    private static String longTermMemoryScope(MemoryEntry entry) {
+        return com.agentcli.memory.LongTermMemory.scopeOf(entry);
     }
 
     private void switchModel(String provider, PrintStream out) {
@@ -120,6 +188,12 @@ public class InteractiveSession {
         out.println("  /help, /?          显示本帮助");
         out.println("  /clear             清空当前对话历史");
         out.println("  /model [provider]  查看或切换模型 (glm/deepseek/openai)");
+        out.println("  /memory, /mem       查看记忆状态");
+        out.println("  /memory list        列出长期记忆");
+        out.println("  /memory search Q    搜索长期记忆");
+        out.println("  /memory delete ID   删除指定记忆");
+        out.println("  /memory clear       清空长期记忆");
+        out.println("  /compact            手动压缩对话历史");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");
