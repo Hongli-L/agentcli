@@ -56,8 +56,9 @@ public class InteractiveSession {
         StreamingConsoleListener listener = new StreamingConsoleListener(out);
         agent.setListener(listener);
         String response = agent.run(userInput);
+        boolean streamed = listener.hasStreamedContent();
         listener.finishTurn();
-        if (!listener.hasStreamedContent() && response != null && !response.isBlank()) {
+        if (!streamed && response != null && !response.isBlank()) {
             out.println(response);
         }
     }
@@ -114,6 +115,10 @@ public class InteractiveSession {
                 yield true;
             }
             case MEMORY_DELETE -> {
+                if (command.payload() == null || command.payload().isBlank()) {
+                    out.println("用法: /memory delete <记忆ID>");
+                    yield true;
+                }
                 boolean deleted = agent.getMemoryManager().deleteLongTerm(command.payload());
                 out.println(deleted ? "已删除记忆: " + command.payload() : "未找到记忆: " + command.payload());
                 yield true;

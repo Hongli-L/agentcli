@@ -1,6 +1,7 @@
 package com.agentcli.tool;
 
 import com.agentcli.common.PolicyException;
+import com.agentcli.common.UserFacingErrors;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.tool.builtin.CreateProjectTool;
 import com.agentcli.tool.builtin.ExecuteCommandTool;
@@ -179,9 +180,9 @@ public class ToolRegistry {
             Map<String, String> args = parseArguments(argumentsJson);
             return tool.execute(args);
         } catch (PolicyException e) {
-            return "🛡️ 策略拒绝: " + e.getMessage();
+            return UserFacingErrors.policyReject(e.getMessage());
         } catch (Exception e) {
-            return "工具执行失败: " + e.getMessage();
+            return UserFacingErrors.toolFailure(e.getMessage());
         }
     }
 
@@ -194,9 +195,14 @@ public class ToolRegistry {
         if (argumentsJson == null || argumentsJson.isBlank()) {
             return args;
         }
-        JsonNode node = MAPPER.readTree(argumentsJson);
+        JsonNode node;
+        try {
+            node = MAPPER.readTree(argumentsJson);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("工具参数必须是合法 JSON");
+        }
         if (!node.isObject()) {
-            return args;
+            throw new IllegalArgumentException("工具参数必须是 JSON 对象");
         }
         node.fields().forEachRemaining(entry -> {
             JsonNode value = entry.getValue();

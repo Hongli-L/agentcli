@@ -1,6 +1,7 @@
 package com.agentcli.agent;
 
 import com.agentcli.llm.LlmClient;
+import com.agentcli.common.UserFacingErrors;
 import com.agentcli.memory.ConversationHistoryCompactor;
 import com.agentcli.memory.MemoryManager;
 import com.agentcli.memory.TokenBudget;
@@ -94,7 +95,7 @@ public class ReActAgent {
         while (true) {
             AgentBudget.ExitReason exitReason = budget.check();
             if (exitReason != AgentBudget.ExitReason.WITHIN_BUDGET) {
-                String message = "❌ " + budget.describeExit(exitReason);
+                String message = UserFacingErrors.fail(budget.describeExit(exitReason));
                 log.warn("ReAct run stopped: {}", message);
                 return message;
             }
@@ -153,7 +154,7 @@ public class ReActAgent {
 
             } catch (IOException e) {
                 log.error("LLM call failed in ReAct loop", e);
-                return "❌ 调用 LLM 失败: " + e.getMessage();
+                return UserFacingErrors.llmFailure(e.getMessage());
             }
         }
     }

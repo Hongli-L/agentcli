@@ -69,6 +69,12 @@ class ToolRegistryTest {
     }
 
     @Test
+    void invalidJsonArgumentsAreRejectedClearly() {
+        String result = registry.executeTool("list_dir", "{bad-json");
+        assertTrue(result.contains("工具参数必须是合法 JSON"), result);
+    }
+
+    @Test
     void pathTraversalIsRejected() {
         String result = registry.executeTool("read_file", "{\"path\":\"../../etc/passwd\"}");
         assertTrue(result.startsWith("🛡️ 策略拒绝"), result);

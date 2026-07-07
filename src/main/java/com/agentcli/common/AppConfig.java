@@ -3,6 +3,8 @@ package com.agentcli.common;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -20,6 +22,7 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class AppConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(AppConfig.class);
     public static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".agentcli");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.json");
     private static final ObjectMapper MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
@@ -106,7 +109,7 @@ public class AppConfig {
             try {
                 return MAPPER.readValue(CONFIG_FILE.toFile(), AppConfig.class);
             } catch (IOException e) {
-                System.err.println("配置文件读取失败，使用默认配置: " + e.getMessage());
+                log.warn("配置文件读取失败，使用默认配置: {}", e.getMessage());
             }
         }
         return new AppConfig();
@@ -117,7 +120,7 @@ public class AppConfig {
             Files.createDirectories(CONFIG_DIR);
             MAPPER.writeValue(CONFIG_FILE.toFile(), this);
         } catch (IOException e) {
-            System.err.println("配置保存失败: " + e.getMessage());
+            log.warn("配置保存失败: {}", e.getMessage());
         }
     }
 

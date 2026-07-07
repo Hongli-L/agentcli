@@ -45,6 +45,16 @@ class InteractiveSessionTest {
     }
 
     @Test
+    void runTurnDoesNotDuplicateStreamedAnswer() {
+        llm.enqueue(new LlmClient.ChatResponse("assistant", "done", null, List.of(), 1, 1));
+
+        session.runTurn("hello", new PrintStream(output, true, StandardCharsets.UTF_8));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertEquals(1, countOccurrences(text, "done"));
+    }
+
+    @Test
     void clearCommandResetsHistory() {
         llm.enqueue(new LlmClient.ChatResponse("assistant", "x", null, List.of(), 1, 1));
         session.runTurn("hi", new PrintStream(output, true, StandardCharsets.UTF_8));
@@ -70,5 +80,15 @@ class InteractiveSessionTest {
         session.run(new java.io.BufferedReader(new StringReader("/exit\n")),
                 new PrintStream(output, true, StandardCharsets.UTF_8));
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("再见"));
+    }
+
+    private static int countOccurrences(String text, String token) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf(token, idx)) >= 0) {
+            count++;
+            idx += token.length();
+        }
+        return count;
     }
 }

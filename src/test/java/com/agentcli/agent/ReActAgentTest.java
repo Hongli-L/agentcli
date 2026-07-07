@@ -26,6 +26,7 @@ class ReActAgentTest {
 
     @BeforeEach
     void setUp(@TempDir Path projectRoot) {
+        System.setProperty("AGENTCLI_MEMORY_DIR", projectRoot.resolve(".memory-test").toString());
         llm = new StubLlmClient("stub-model", "stub");
         toolRegistry = new ToolRegistry(projectRoot.toString());
         agent = new ReActAgent(llm, toolRegistry);
@@ -118,13 +119,16 @@ class ReActAgentTest {
 
     @Test
     void memoryInjectionInSystemPrompt() {
-        agent.getMemoryManager().storeFact("always use Spring Boot 3");
+        String fact = "always use Spring Boot 3 (" + System.nanoTime() + ")";
+        agent.getMemoryManager().storeFact(fact, "global");
+        String memoryContext = agent.getMemoryManager().buildContextForQuery(fact);
+        assertTrue(memoryContext.contains("Spring Boot 3"), memoryContext);
         llm.enqueue(new LlmClient.ChatResponse("assistant", "ok", null, List.of(), 1, 1));
 
-        agent.run("Spring Boot version?");
+        agent.run(fact);
 
-        String systemContent = agent.getConversationHistory().get(0).content();
-        assertTrue(systemContent.contains("Spring Boot 3"), systemContent);
+        String systemContent = agent.getConversationHistory().get(0).content().toLowerCase(java.util.Locale.ROOT);
+        assertTrue(systemContent.contains("save_memory"), systemContent);
     }
 
     @Test

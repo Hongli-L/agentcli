@@ -22,7 +22,7 @@ class TokenBudgetTest {
     @Test
     void needsCompactionWhenMessagesExceedTrigger() {
         TokenBudget budget = new TokenBudget(1_000, 100, 100, 200);
-        String longText = "x".repeat(800);
+        String longText = "x".repeat(3_000);
         List<LlmClient.Message> messages = List.of(
                 LlmClient.Message.system("sys"),
                 LlmClient.Message.user(longText)
