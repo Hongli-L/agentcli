@@ -7,6 +7,9 @@
 # 迁移参考的原始工作副本（不纳入版本库）
 _reference/
 
+# 本地工具缓存
+.workbuddy/
+
 # 编译输出
 target/
 *.class

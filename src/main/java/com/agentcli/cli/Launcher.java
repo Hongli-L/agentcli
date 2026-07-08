@@ -21,6 +21,7 @@ public final class Launcher {
     }
 
     public static void main(String[] args) {
+        bootstrapRuntime();
         try {
             run(args, System.out, System.err);
         } catch (IllegalArgumentException e) {
@@ -73,6 +74,19 @@ public final class Launcher {
         BufferedReader input = new BufferedReader(
                 new InputStreamReader(System.in, StandardCharsets.UTF_8));
         session.run(input, out);
+    }
+
+    /** 在日志框架初始化前桥接环境变量到 JVM 系统属性。 */
+    static void bootstrapRuntime() {
+        bridgeEnvToSystemProperty("AGENTCLI_LOG_LEVEL", "agentcli.log.level");
+        bridgeEnvToSystemProperty("AGENTCLI_LOG_DIR", "agentcli.log.dir");
+    }
+
+    private static void bridgeEnvToSystemProperty(String envKey, String propertyKey) {
+        String value = System.getenv(envKey);
+        if (value != null && !value.isBlank() && System.getProperty(propertyKey) == null) {
+            System.setProperty(propertyKey, value.trim());
+        }
     }
 
     private static void printHelp(java.io.PrintStream out) {

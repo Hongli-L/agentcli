@@ -1,0 +1,10 @@
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+.env
+.agentcli/
+_reference/
+.workbuddy/
+**/*.log
