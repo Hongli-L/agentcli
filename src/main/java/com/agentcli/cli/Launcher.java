@@ -6,9 +6,8 @@ import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.tool.ToolRegistry;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.io.PrintStream;
+import java.nio.charset.Charset;
 
 /**
  * AgentCLI 程序入口。
@@ -71,9 +70,12 @@ public final class Launcher {
             return;
         }
 
-        BufferedReader input = new BufferedReader(
-                new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        session.run(input, out);
+        Charset consoleCharset = ConsoleCharsets.forConsole();
+        PrintStream consoleOut = out == System.out
+                ? new PrintStream(System.out, true, consoleCharset)
+                : out;
+        ReplReader input = ReplReader.create(consoleCharset, consoleOut);
+        session.run(input, consoleOut);
     }
 
     /** 在日志框架初始化前桥接环境变量到 JVM 系统属性。 */

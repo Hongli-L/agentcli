@@ -1,12 +1,12 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
+import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.AppConfig;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.memory.MemoryEntry;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
 
@@ -25,29 +25,31 @@ public class InteractiveSession {
         this.config = config;
     }
 
-    public void run(BufferedReader input, PrintStream out) throws IOException {
-        printWelcome(out);
-        while (true) {
-            out.print("\nYou> ");
-            out.flush();
-            String line = input.readLine();
-            if (line == null) {
-                out.println();
-                break;
-            }
-
-            CliCommandParser.ParsedCommand command = CliCommandParser.parse(line);
-            if (handleCommand(command, out)) {
-                if (command.type() == CliCommandParser.CommandType.EXIT) {
-                    return;
+    public void run(ReplReader input, PrintStream out) throws IOException {
+        try {
+            printWelcome(out);
+            while (true) {
+                String line = input.readLine("You> ");
+                if (line == null) {
+                    out.println();
+                    break;
                 }
-                continue;
-            }
-            if (line.isBlank()) {
-                continue;
-            }
 
-            runTurn(line, out);
+                CliCommandParser.ParsedCommand command = CliCommandParser.parse(line);
+                if (handleCommand(command, out)) {
+                    if (command.type() == CliCommandParser.CommandType.EXIT) {
+                        return;
+                    }
+                    continue;
+                }
+                if (line.isBlank()) {
+                    continue;
+                }
+
+                runTurn(line, out);
+            }
+        } finally {
+            input.close();
         }
     }
 
@@ -181,10 +183,10 @@ public class InteractiveSession {
 
     private void printWelcome(PrintStream out) {
         out.println();
-        out.println("AgentCLI v" + Launcher.VERSION + "  交互模式");
-        out.println("模型: " + llmClient.getProviderName() + " / " + llmClient.getModelName());
-        out.println("项目: " + agent.getToolRegistry().getProjectPath());
-        out.println("输入 /help 查看命令，/exit 退出。");
+        out.println(AnsiStyle.heading("AgentCLI v" + Launcher.VERSION));
+        out.println(AnsiStyle.subtle("模型: " + llmClient.getProviderName() + " / " + llmClient.getModelName()
+                + "  ·  项目: " + agent.getToolRegistry().getProjectPath()));
+        out.println(AnsiStyle.subtle("输入 /help 查看命令，/exit 退出。"));
     }
 
     static void printSessionHelp(PrintStream out) {

@@ -77,8 +77,11 @@ class InteractiveSessionTest {
 
     @Test
     void replExitsOnExitCommand() throws Exception {
-        session.run(new java.io.BufferedReader(new StringReader("/exit\n")),
-                new PrintStream(output, true, StandardCharsets.UTF_8));
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        ReplReader input = new ReplReader.BufferedReplReader(
+                new java.io.BufferedReader(new StringReader("/exit\n")),
+                out);
+        session.run(input, out);
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("再见"));
     }
 

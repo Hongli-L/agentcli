@@ -1,6 +1,8 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.AgentRunListener;
+import com.agentcli.common.AnsiStyle;
+import com.agentcli.common.TerminalMarkdownRenderer;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.tool.ToolExecutionResult;
 
@@ -10,18 +12,21 @@ import java.util.List;
 /**
  * 把 Agent 流式增量与工具事件渲染到终端。
  *
- * reasoning / content 增量直接打印；工具调用显示名称与耗时摘要。
- * CLI 层在回合结束后调用 {@link #finishTurn()} 补换行并重置状态。
+ * reasoning 使用弱化样式；正文经 {@link TerminalMarkdownRenderer} 做轻量 Markdown 渲染。
  */
 public class StreamingConsoleListener implements AgentRunListener {
 
+    private static final String REASONING_PREFIX = "\u001B[3m\u001B[90m";
+    private static final String ANSI_RESET = "\u001B[0m";
+
     private final PrintStream out;
+    private final TerminalMarkdownRenderer markdownRenderer;
     private boolean reasoningOpen;
     private boolean contentStreamed;
-    private final StringBuilder contentBuffer = new StringBuilder();
 
     public StreamingConsoleListener(PrintStream out) {
         this.out = out == null ? System.out : out;
+        this.markdownRenderer = new TerminalMarkdownRenderer(this.out);
     }
 
     public boolean hasStreamedContent() {
@@ -29,12 +34,21 @@ public class StreamingConsoleListener implements AgentRunListener {
     }
 
     public void finishTurn() {
-        if (reasoningOpen || contentStreamed) {
+        if (contentStreamed) {
+            markdownRenderer.finish();
+        }
+        if (reasoningOpen) {
+            if (AnsiStyle.isEnabled()) {
+                out.print(ANSI_RESET);
+            }
+            out.println();
+            reasoningOpen = false;
+        } else if (contentStreamed) {
             out.println();
         }
-        reasoningOpen = false;
         contentStreamed = false;
-        contentBuffer.setLength(0);
+        out.print("\u001B[0m");
+        out.flush();
     }
 
     @Override
@@ -44,7 +58,10 @@ public class StreamingConsoleListener implements AgentRunListener {
         }
         if (!reasoningOpen) {
             out.println();
-            out.println("Thinking...");
+            out.println(AnsiStyle.subtle("Thinking..."));
+            if (AnsiStyle.isEnabled()) {
+                out.print(REASONING_PREFIX);
+            }
             reasoningOpen = true;
         }
         out.print(delta);
@@ -56,17 +73,16 @@ public class StreamingConsoleListener implements AgentRunListener {
         if (delta == null || delta.isEmpty()) {
             return;
         }
-        closeReasoningLine();
+        closeReasoning();
         contentStreamed = true;
-        out.print(delta);
-        contentBuffer.append(delta);
+        markdownRenderer.append(delta);
     }
 
     @Override
     public void onToolCalls(List<LlmClient.ToolCall> toolCalls) {
-        closeReasoningLine();
+        closeReasoning();
         if (contentStreamed) {
-            out.println();
+            markdownRenderer.finish();
             contentStreamed = false;
         }
         if (toolCalls == null) {
@@ -75,7 +91,7 @@ public class StreamingConsoleListener implements AgentRunListener {
         for (LlmClient.ToolCall toolCall : toolCalls) {
             String name = toolCall.function().name();
             String args = compactArgs(toolCall.function().arguments());
-            out.println("> tool " + name + (args.isEmpty() ? "" : " " + args));
+            out.println(AnsiStyle.section("> tool " + name) + (args.isEmpty() ? "" : " " + AnsiStyle.subtle(args)));
         }
     }
 
@@ -85,19 +101,22 @@ public class StreamingConsoleListener implements AgentRunListener {
             return;
         }
         if (result.timedOut()) {
-            out.println("  (timeout) " + result.name());
+            out.println(AnsiStyle.error("  (timeout) " + result.name()));
             return;
         }
         String text = result.result() == null ? "" : result.result();
         if (text.startsWith("🛡️") || text.startsWith("工具执行失败")) {
-            out.println("  (!) " + result.name());
+            out.println(AnsiStyle.error("  (!) " + result.name()));
             return;
         }
-        out.println("  ok " + result.name() + " (" + result.elapsedMillis() + "ms)");
+        out.println(AnsiStyle.subtle("  ok " + result.name() + " (" + result.elapsedMillis() + "ms)"));
     }
 
-    private void closeReasoningLine() {
+    private void closeReasoning() {
         if (reasoningOpen) {
+            if (AnsiStyle.isEnabled()) {
+                out.print(ANSI_RESET);
+            }
             out.println();
             reasoningOpen = false;
         }
