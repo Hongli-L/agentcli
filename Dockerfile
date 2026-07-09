@@ -1,4 +1,4 @@
-# 多阶段构建：开发期不依赖 Docker，仅用于发布与部署加分项。
+# 多阶段构建，用于容器化部署。
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 COPY pom.xml .
