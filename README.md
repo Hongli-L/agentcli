@@ -120,7 +120,10 @@ java -jar target/agentcli-1.0.0.jar --provider deepseek -C /path/to/project
 - OkHttp 4（HTTP / SSE 流式）
 - Jackson（JSON）
 - Logback（滚动日志）
+- 终端 Markdown 轻量渲染（标题 / 列表 / 表格 / 代码块 + ANSI 配色）
 - JUnit 5（单元测试）
+
+终端渲染可通过 `NO_COLOR=1` 关闭彩色输出，或通过 `-Dagentcli.render.color=false` 禁用 ANSI。
 
 ## 开发与测试
 
