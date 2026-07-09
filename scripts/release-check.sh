@@ -12,7 +12,7 @@ java -jar "$jar" --version >/dev/null
 
 echo "==> [3/4] legacy identifier scan"
 patterns=("com.paicli" "paicli_" "~/.paicli" " paicli ")
-roots=(src README.md pom.xml .env.example Dockerfile)
+roots=(src README.md pom.xml .env.example)
 hits=0
 for root in "${roots[@]}"; do
   [[ -e "$root" ]] || continue

@@ -72,13 +72,6 @@ java -jar target/agentcli-1.0.0.jar -p "列出当前目录下的 Java 文件"
 java -jar target/agentcli-1.0.0.jar --provider deepseek -C /path/to/project
 ```
 
-### 4. Docker（可选）
-
-```bash
-docker build -t agentcli:1.0.0 .
-docker run --rm -e GLM_API_KEY=your_key agentcli:1.0.0 --version
-```
-
 ## 配置说明
 
 | 变量 | 说明 |

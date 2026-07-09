@@ -14,7 +14,7 @@ if ($LASTEXITCODE -ne 0) { throw "Jar --version failed" }
 
 Write-Host "==> [3/4] legacy identifier scan"
 $patterns = @("com.paicli", "paicli_", "~/.paicli", " paicli ")
-$roots = @("src", "README.md", "pom.xml", ".env.example", "Dockerfile")
+$roots = @("src", "README.md", "pom.xml", ".env.example")
 $hits = @()
 foreach ($root in $roots) {
     if (-not (Test-Path $root)) { continue }
