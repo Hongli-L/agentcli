@@ -11,13 +11,16 @@ final class CliArgs {
 
     final boolean help;
     final boolean version;
+    final boolean hitl;
     final String prompt;
     final String provider;
     final String projectPath;
 
-    private CliArgs(boolean help, boolean version, String prompt, String provider, String projectPath) {
+    private CliArgs(boolean help, boolean version, boolean hitl,
+                    String prompt, String provider, String projectPath) {
         this.help = help;
         this.version = version;
+        this.hitl = hitl;
         this.prompt = prompt;
         this.provider = provider;
         this.projectPath = projectPath;
@@ -26,6 +29,7 @@ final class CliArgs {
     static CliArgs parse(String[] args) {
         boolean help = false;
         boolean version = false;
+        boolean hitl = false;
         String prompt = null;
         String provider = null;
         String projectPath = null;
@@ -37,6 +41,8 @@ final class CliArgs {
                     help = true;
                 } else if ("-v".equals(arg) || "--version".equals(arg)) {
                     version = true;
+                } else if ("--hitl".equals(arg)) {
+                    hitl = true;
                 } else if ("-p".equals(arg) || "--prompt".equals(arg)) {
                     prompt = readValue(args, ++i, arg);
                 } else if ("--provider".equals(arg)) {
@@ -49,7 +55,7 @@ final class CliArgs {
                 }
             }
         }
-        return new CliArgs(help, version, prompt, provider, projectPath);
+        return new CliArgs(help, version, hitl, prompt, provider, projectPath);
     }
 
     /** 把剩余参数拼成单次 prompt（用于 -p 后跟多个词的场景）。 */

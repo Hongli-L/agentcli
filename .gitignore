@@ -22,6 +22,9 @@ target/
 # 日志
 *.log
 
+# 内部参考文件
+ROADMAP.md
+
 # 操作系统
 .DS_Store
 Thumbs.db

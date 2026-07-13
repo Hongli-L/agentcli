@@ -2,6 +2,8 @@ package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
 import com.agentcli.common.AppConfig;
+import com.agentcli.hitl.HitlToolRegistry;
+import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.tool.ToolRegistry;
@@ -61,7 +63,8 @@ public final class Launcher {
         String projectPath = cli.projectPath != null && !cli.projectPath.isBlank()
                 ? cli.projectPath
                 : System.getProperty("user.dir");
-        ToolRegistry toolRegistry = new ToolRegistry(projectPath);
+        TerminalHitlHandler hitlHandler = new TerminalHitlHandler(cli.hitl);
+        ToolRegistry toolRegistry = new HitlToolRegistry(projectPath, hitlHandler);
         ReActAgent agent = new ReActAgent(client, toolRegistry);
         InteractiveSession session = new InteractiveSession(agent, client, config);
 
@@ -101,6 +104,7 @@ public final class Launcher {
         out.println("  -p, --prompt TEXT     单次提问后退出");
         out.println("  --provider NAME       指定模型 provider (glm/deepseek/openai)");
         out.println("  --project, -C DIR     指定项目根目录（工具沙箱范围）");
+        out.println("  --hitl                启动时开启人工审批模式");
         out.println();
         out.println("不带参数启动时进入交互式 REPL。");
         InteractiveSession.printSessionHelp(out);

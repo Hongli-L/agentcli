@@ -12,6 +12,7 @@ final class CliCommandParser {
         HELP,
         MODEL,
         COMPACT,
+        HITL,
         MEMORY_STATUS,
         MEMORY_LIST,
         MEMORY_CLEAR,
@@ -49,6 +50,12 @@ final class CliCommandParser {
         }
         if (trimmed.equalsIgnoreCase("/compact")) {
             return new ParsedCommand(CommandType.COMPACT, null);
+        }
+        if (trimmed.equalsIgnoreCase("/hitl")) {
+            return new ParsedCommand(CommandType.HITL, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/hitl ", 0, 6)) {
+            return new ParsedCommand(CommandType.HITL, trimmed.substring(6).trim());
         }
         if (trimmed.equalsIgnoreCase("/model")) {
             return new ParsedCommand(CommandType.MODEL, null);

@@ -171,7 +171,7 @@ public class ToolRegistry {
         }
     }
 
-    private String doExecuteTool(String name, String argumentsJson) {
+    protected String doExecuteTool(String name, String argumentsJson) {
         Tool tool = tools.get(name);
         if (tool == null) {
             return "未知工具: " + name;

@@ -3,6 +3,8 @@ package com.agentcli.cli;
 import com.agentcli.agent.ReActAgent;
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.AppConfig;
+import com.agentcli.hitl.HitlHandler;
+import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.memory.MemoryEntry;
@@ -99,6 +101,10 @@ public class InteractiveSession {
                 }
                 yield true;
             }
+            case HITL -> {
+                handleHitl(command.payload(), out);
+                yield true;
+            }
             case MEMORY_STATUS -> {
                 out.println(agent.getMemoryManager().getSystemStatus());
                 yield true;
@@ -181,6 +187,42 @@ public class InteractiveSession {
         out.println("已切换: " + next.getProviderName() + " / " + next.getModelName());
     }
 
+    private void handleHitl(String payload, PrintStream out) {
+        HitlHandler handler = getHitlHandler();
+        if (handler == null) {
+            out.println("当前未启用 HITL 审批（工具注册表不是 HitlToolRegistry）。");
+            return;
+        }
+        if (payload == null || payload.isBlank()) {
+            out.println("HITL 审批状态: " + (handler.isEnabled() ? "已启用" : "已关闭"));
+            out.println("用法: /hitl on | off | clear");
+            return;
+        }
+        String normalized = payload.trim().toLowerCase();
+        switch (normalized) {
+            case "on" -> {
+                handler.setEnabled(true);
+                out.println("HITL 审批已启用。危险操作（写文件/执行命令/创建项目）将需要人工确认。");
+            }
+            case "off" -> {
+                handler.setEnabled(false);
+                out.println("HITL 审批已关闭。");
+            }
+            case "clear" -> {
+                handler.clearApprovedAll();
+                out.println("已清除全部放行记录。");
+            }
+            default -> out.println("未知 HITL 子命令: " + payload + "。用法: /hitl on | off | clear");
+        }
+    }
+
+    private HitlHandler getHitlHandler() {
+        if (agent.getToolRegistry() instanceof HitlToolRegistry hitlRegistry) {
+            return hitlRegistry.getHitlHandler();
+        }
+        return null;
+    }
+
     private void printWelcome(PrintStream out) {
         out.println();
         out.println(AnsiStyle.heading("AgentCLI v" + Launcher.VERSION));
@@ -201,6 +243,7 @@ public class InteractiveSession {
         out.println("  /memory delete ID   删除指定记忆");
         out.println("  /memory clear       清空长期记忆");
         out.println("  /compact            手动压缩对话历史");
+        out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");
