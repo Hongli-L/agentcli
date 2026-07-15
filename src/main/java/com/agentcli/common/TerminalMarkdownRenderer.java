@@ -309,7 +309,11 @@ public final class TerminalMarkdownRenderer {
     }
 
     private int[] allocateTableWidths(List<List<String>> rows, int[] naturalWidths, int columnCount) {
-        int available = Math.max(columnCount * MIN_TABLE_CELL_WIDTH, terminalColumns() - (columnCount * 3 + 1));
+        // ANSI escape codes (subtle on borders + emphasis on headers) add invisible chars.
+        // Subtract worst-case overhead so the real line length stays within terminal width.
+        int ansiOverhead = AnsiStyle.isEnabled() ? 13 : 0;
+        int available = Math.max(columnCount * MIN_TABLE_CELL_WIDTH,
+                terminalColumns() - (columnCount * 3 + 1) - ansiOverhead);
         int[] widths = new int[columnCount];
         int base = Math.max(MIN_TABLE_CELL_WIDTH, Math.min(12, available / Math.max(1, columnCount)));
         int used = 0;
