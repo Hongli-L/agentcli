@@ -6,10 +6,12 @@ import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.mcp.McpServerManager;
 import com.agentcli.tool.ToolRegistry;
 
 import java.io.PrintStream;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
 
 /**
  * AgentCLI 程序入口。
@@ -68,6 +70,9 @@ public final class Launcher {
         ReActAgent agent = new ReActAgent(client, toolRegistry);
         InteractiveSession session = new InteractiveSession(agent, client, config);
 
+        McpServerManager mcpManager = new McpServerManager(toolRegistry, Path.of(projectPath));
+        session.setMcpManager(mcpManager);
+
         if (cli.prompt != null && !cli.prompt.isBlank()) {
             session.runTurn(cli.prompt, out);
             return;
@@ -105,6 +110,7 @@ public final class Launcher {
         out.println("  --provider NAME       指定模型 provider (glm/deepseek/openai)");
         out.println("  --project, -C DIR     指定项目根目录（工具沙箱范围）");
         out.println("  --hitl                启动时开启人工审批模式");
+        out.println("  --mcp                 启动时自动加载并连接 MCP 服务器");
         out.println();
         out.println("不带参数启动时进入交互式 REPL。");
         InteractiveSession.printSessionHelp(out);

@@ -71,6 +71,11 @@ public class ToolRegistry {
         tools.put(tool.name(), tool);
     }
 
+    /** 移除指定名称的工具。 */
+    public void unregister(String name) {
+        tools.remove(name);
+    }
+
     public boolean hasTool(String name) {
         return tools.containsKey(name);
     }

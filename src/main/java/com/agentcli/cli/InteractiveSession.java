@@ -7,6 +7,7 @@ import com.agentcli.hitl.HitlHandler;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.mcp.McpServerManager;
 import com.agentcli.memory.MemoryEntry;
 
 import java.io.IOException;
@@ -20,11 +21,16 @@ public class InteractiveSession {
     private final ReActAgent agent;
     private final AppConfig config;
     private LlmClient llmClient;
+    private McpServerManager mcpManager;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
         this.agent = agent;
         this.llmClient = llmClient;
         this.config = config;
+    }
+
+    public void setMcpManager(McpServerManager mcpManager) {
+        this.mcpManager = mcpManager;
     }
 
     public void run(ReplReader input, PrintStream out) throws IOException {
@@ -103,6 +109,10 @@ public class InteractiveSession {
             }
             case HITL -> {
                 handleHitl(command.payload(), out);
+                yield true;
+            }
+            case MCP -> {
+                handleMcp(command.payload(), out);
                 yield true;
             }
             case MEMORY_STATUS -> {
@@ -216,6 +226,32 @@ public class InteractiveSession {
         }
     }
 
+    private void handleMcp(String payload, PrintStream out) {
+        if (mcpManager == null) {
+            out.println("MCP 服务器管理器未初始化（使用 --mcp 参数启动）。");
+            return;
+        }
+        if (payload == null || payload.isBlank()) {
+            out.println(mcpManager.formatStatus());
+            out.println("用法: /mcp status | logs <name>");
+            return;
+        }
+        String[] parts = payload.trim().split("\\s+", 2);
+        String sub = parts[0].toLowerCase();
+        String arg = parts.length > 1 ? parts[1] : "";
+        switch (sub) {
+            case "status" -> out.println(mcpManager.formatStatus());
+            case "logs" -> {
+                if (arg.isBlank()) {
+                    out.println("用法: /mcp logs <server_name>");
+                } else {
+                    out.println(mcpManager.logs(arg));
+                }
+            }
+            default -> out.println("未知 MCP 子命令: " + sub + "。用法: /mcp status | logs <name>");
+        }
+    }
+
     private HitlHandler getHitlHandler() {
         if (agent.getToolRegistry() instanceof HitlToolRegistry hitlRegistry) {
             return hitlRegistry.getHitlHandler();
@@ -228,6 +264,9 @@ public class InteractiveSession {
         out.println(AnsiStyle.heading("AgentCLI v" + Launcher.VERSION));
         out.println(AnsiStyle.subtle("模型: " + llmClient.getProviderName() + " / " + llmClient.getModelName()
                 + "  ·  项目: " + agent.getToolRegistry().getProjectPath()));
+        if (mcpManager != null && !mcpManager.servers().isEmpty()) {
+            out.println(AnsiStyle.subtle("MCP: " + mcpManager.servers().size() + " 个服务器已配置"));
+        }
         out.println(AnsiStyle.subtle("输入 /help 查看命令，/exit 退出。"));
     }
 
@@ -244,6 +283,7 @@ public class InteractiveSession {
         out.println("  /memory clear       清空长期记忆");
         out.println("  /compact            手动压缩对话历史");
         out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
+        out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");
