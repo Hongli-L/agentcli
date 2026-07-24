@@ -13,6 +13,8 @@ public final class McpInitializeRequest {
         root.put("protocolVersion", PROTOCOL_VERSION);
         ObjectNode capabilities = root.putObject("capabilities");
         capabilities.putObject("tools");
+        capabilities.putObject("resources");
+        capabilities.putObject("prompts");
         ObjectNode clientInfo = root.putObject("clientInfo");
         clientInfo.put("name", "agentcli");
         clientInfo.put("version", "1.0.0");

@@ -2,9 +2,15 @@ package com.agentcli.mcp;
 
 import com.agentcli.mcp.config.McpConfigLoader;
 import com.agentcli.mcp.config.McpServerConfig;
+import com.agentcli.mcp.prompt.McpPromptBridge;
+import com.agentcli.mcp.prompt.McpPromptTool;
 import com.agentcli.mcp.protocol.McpToolDescriptor;
+import com.agentcli.mcp.resources.McpResourceBridge;
+import com.agentcli.mcp.resources.McpResourceTool;
+import com.agentcli.mcp.transport.HttpTransport;
 import com.agentcli.mcp.transport.McpTransport;
 import com.agentcli.mcp.transport.StdioTransport;
+import com.agentcli.tool.Tool;
 import com.agentcli.tool.ToolRegistry;
 
 import java.io.IOException;
@@ -67,8 +73,10 @@ public class McpServerManager implements AutoCloseable {
                 case DISABLED -> "disabled";
                 case ERROR -> "error";
             };
+            long toolCount = server.tools().stream()
+                    .filter(d -> d.kind() == McpToolDescriptor.Kind.TOOL).count();
             String tools = server.status() == McpServerStatus.READY
-                    ? server.tools().size() + (server.tools().size() == 1 ? " tool" : " tools")
+                    ? toolCount + (toolCount == 1 ? " tool" : " tools")
                     : "--";
             String error = server.status() == McpServerStatus.ERROR && server.errorMessage() != null
                     ? server.errorMessage() : "";
@@ -101,10 +109,17 @@ public class McpServerManager implements AutoCloseable {
             McpTransport transport = createTransport(server.config());
             McpClient client = new McpClient(server.name(), transport);
             client.initialize();
-            List<McpToolDescriptor> tools = client.listTools();
-            registerTools(server, client, tools);
+            List<McpToolDescriptor> descriptors = new ArrayList<>();
+            descriptors.addAll(client.listTools());
+            if (client.supportsResources()) {
+                descriptors.addAll(McpResourceTool.descriptors(server.name()));
+            }
+            if (client.supportsPrompts()) {
+                descriptors.addAll(McpPromptTool.descriptors(server.name(), client.listPrompts()));
+            }
+            registerDescriptors(server, client, descriptors);
             server.client(client);
-            server.tools(tools);
+            server.tools(descriptors);
             server.markStarted();
             server.status(McpServerStatus.READY);
         } catch (Exception e) {
@@ -114,9 +129,14 @@ public class McpServerManager implements AutoCloseable {
         }
     }
 
-    private void registerTools(McpServer server, McpClient client, List<McpToolDescriptor> tools) {
-        for (McpToolDescriptor desc : tools) {
-            toolRegistry.register(new McpToolBridge(desc, client));
+    private void registerDescriptors(McpServer server, McpClient client, List<McpToolDescriptor> descriptors) {
+        for (McpToolDescriptor desc : descriptors) {
+            Tool tool = switch (desc.kind()) {
+                case TOOL -> new McpToolBridge(desc, client);
+                case RESOURCE -> new McpResourceBridge(desc, client);
+                case PROMPT -> new McpPromptBridge(desc, client);
+            };
+            toolRegistry.register(tool);
         }
     }
 
@@ -129,8 +149,7 @@ public class McpServerManager implements AutoCloseable {
 
     private McpTransport createTransport(McpServerConfig config) throws IOException {
         if (config.isHttp()) {
-            throw new UnsupportedOperationException(
-                    "HTTP transport is not yet supported (planned for v0.7.0). Use stdio transport.");
+            return new HttpTransport(config.getUrl(), config.getHeaders());
         }
         return new StdioTransport(config.getCommand(), config.getArgs(), config.getEnv(), projectDir);
     }
