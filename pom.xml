@@ -43,6 +43,13 @@
             <version>1.5.18</version>
         </dependency>
 
+        <!-- SQLite 嵌入式持久化（借鉴 PaiCLI，无独立服务进程） -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.49.1.0</version>
+        </dependency>
+
         <!-- REPL 行编辑（方向键、退格、历史） -->
         <dependency>
             <groupId>org.jline</groupId>

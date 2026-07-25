@@ -10,9 +10,14 @@ import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.mcp.McpServerManager;
 import com.agentcli.memory.MemoryEntry;
 import com.agentcli.plan.PlanExecuteAgent;
+import com.agentcli.plan.ExecutionPlan;
+import com.agentcli.plan.PlanStore;
+import com.agentcli.plan.Task;
+import com.agentcli.store.SqliteStore;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.sql.SQLException;
 
 /**
  * 交互式 REPL：读取用户输入，分发斜杠命令或交给 {@link ReActAgent} 处理。
@@ -260,6 +265,7 @@ public class InteractiveSession {
     private void runPlan(String payload, PrintStream out) {
         if (payload == null || payload.isBlank()) {
             out.println("用法: /plan <目标> —— 例如 /plan 先读 main.java 再写单元测试");
+            out.println("      /plan resume   —— 恢复最近一个未完成(崩溃/中断)的 plan 并续跑");
             return;
         }
         PlanExecuteAgent planAgent = new PlanExecuteAgent(llmClient, agent.getToolRegistry());
@@ -267,11 +273,39 @@ public class InteractiveSession {
         planAgent.setListener(listener);
         planAgent.setOut(out);
         try {
-            String result = planAgent.run(payload);
-            listener.finishTurn();
-            if (result != null && !result.isBlank()) {
-                out.println(result);
+            PlanStore planStore = new PlanStore(SqliteStore.defaultStore());
+            planAgent.setPlanStore(planStore);
+            if ("resume".equalsIgnoreCase(payload.trim())) {
+                String planId = planStore.findResumablePlanId();
+                if (planId == null) {
+                    out.println("没有可恢复的 plan（最近一个 plan 已完成 / 失败 / 已取消）。");
+                    return;
+                }
+                ExecutionPlan plan = planStore.loadPlan(planId);
+                if (plan == null) {
+                    out.println("plan " + planId + " 无法恢复。");
+                    return;
+                }
+                // 续跑：把失败任务重置为待执行以便重试
+                plan.getAllTasks().stream()
+                        .filter(t -> t.getStatus() == Task.TaskStatus.FAILED)
+                        .forEach(t -> t.restoreState(Task.TaskStatus.PENDING, null, null));
+                out.println("[恢复 plan " + planId + "]");
+                String result = planAgent.executePlan(plan);
+                listener.finishTurn();
+                if (result != null && !result.isBlank()) {
+                    out.println(result);
+                }
+            } else {
+                String result = planAgent.run(payload);
+                listener.finishTurn();
+                if (result != null && !result.isBlank()) {
+                    out.println(result);
+                }
             }
+        } catch (SQLException e) {
+            listener.finishTurn();
+            out.println("Plan 存储初始化失败: " + e.getMessage());
         } catch (IOException e) {
             listener.finishTurn();
             out.println("计划执行失败: " + e.getMessage());
@@ -310,6 +344,7 @@ public class InteractiveSession {
         out.println("  /compact            手动压缩对话历史");
         out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
         out.println("  /plan <目标>         先规划再分步执行复杂任务");
+        out.println("  /plan resume         恢复最近一个未完成的 plan 并续跑");
         out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
         out.println("  /exit, /quit       退出交互模式");
         out.println();

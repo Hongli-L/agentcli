@@ -130,6 +130,13 @@ public class Task {
         this.endTime = System.currentTimeMillis();
     }
 
+    /** 从持久化状态恢复（{@code PlanStore} 重建与 REPL 续跑均可用）。 */
+    public void restoreState(TaskStatus status, String result, String error) {
+        this.status = status;
+        this.result = result;
+        this.error = error;
+    }
+
     /** 任务执行耗时（毫秒）。 */
     public long getDuration() {
         if (startTime == 0) {

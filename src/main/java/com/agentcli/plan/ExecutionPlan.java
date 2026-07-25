@@ -189,6 +189,11 @@ public class ExecutionPlan {
         this.endTime = System.currentTimeMillis();
     }
 
+    /** 从持久化状态恢复计划级状态（仅供 {@code PlanStore} 重建使用）。 */
+    void restoreStatus(PlanStatus status) {
+        this.status = status;
+    }
+
     public long getDuration() {
         if (startTime == 0) {
             return 0;

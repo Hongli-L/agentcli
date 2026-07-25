@@ -36,6 +36,7 @@ public class PlanExecuteAgent {
     private AgentRunListener listener = AgentRunListener.NO_OP;
     private PrintStream out = System.out;
     private TaskExecutor taskExecutor;
+    private PlanStore planStore;
 
     public PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry) {
         this(llmClient, toolRegistry, new Planner(llmClient));
@@ -65,6 +66,11 @@ public class PlanExecuteAgent {
         this.taskExecutor = taskExecutor;
     }
 
+    /** 注入 Plan 持久化存储（可选）；设置后计划与任务状态变更会落盘，支持断点续跑。 */
+    public void setPlanStore(PlanStore planStore) {
+        this.planStore = planStore;
+    }
+
     /** 顶层入口：规划 + 执行，返回最终摘要文本。 */
     public String run(String goal) throws IOException {
         ExecutionPlan plan = planner.createPlan(goal);
@@ -74,6 +80,7 @@ public class PlanExecuteAgent {
     /** 执行已构建好的计划（可被外部复用，例如测试或 REPL 命令）。 */
     public String executePlan(ExecutionPlan plan) throws IOException {
         plan.markStarted();
+        persistPlan(plan);
         out.println("Executing plan: " + plan.getGoal());
         StringBuilder finalResult = new StringBuilder();
         int replanAttempts = 0;
@@ -85,18 +92,21 @@ public class PlanExecuteAgent {
             }
             for (Task task : batch) {
                 task.markStarted();
+                persistTask(plan, task);
                 out.println("> Executing [" + task.getId() + "]: " + task.getDescription());
                 String result;
                 try {
                     result = taskExecutor.execute(buildTaskContext(plan.getGoal(), plan, task));
                 } catch (Exception e) {
                     task.markFailed(e.getMessage());
+                    persistTask(plan, task);
                     out.println("  x failed [" + task.getId() + "]: " + e.getMessage());
                     if (plan.getProgress() < 0.5 && replanAttempts < 1) {
                         replanAttempts++;
                         out.println("  Replanning...");
                         try {
                             plan = planner.replan(plan, e.getMessage());
+                            persistPlan(plan);
                         } catch (IOException re) {
                             out.println("  Replan failed: " + re.getMessage());
                         }
@@ -109,18 +119,33 @@ public class PlanExecuteAgent {
                     continue;
                 }
                 task.markCompleted(result);
+                persistTask(plan, task);
                 out.println("  ok [" + task.getId() + "]");
             }
         }
 
         if (plan.hasFailed() || !plan.isAllCompleted()) {
             plan.markFailed();
+            persistPlan(plan);
             return finalResult.isEmpty()
                     ? "Plan stalled: some tasks failed or dependencies unmet."
                     : "Plan partially completed; some tasks failed.\n" + finalResult;
         }
         plan.markCompleted();
+        persistPlan(plan);
         return "Plan executed successfully.";
+    }
+
+    private void persistPlan(ExecutionPlan plan) {
+        if (planStore != null) {
+            planStore.savePlan(plan);
+        }
+    }
+
+    private void persistTask(ExecutionPlan plan, Task task) {
+        if (planStore != null) {
+            planStore.saveTask(plan.getId(), task);
+        }
     }
 
     private List<Task> getExecutableTasksInOrder(ExecutionPlan plan) {
