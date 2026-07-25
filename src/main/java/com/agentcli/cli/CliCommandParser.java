@@ -14,6 +14,7 @@ final class CliCommandParser {
         COMPACT,
         HITL,
         MCP,
+        PLAN,
         MEMORY_STATUS,
         MEMORY_LIST,
         MEMORY_CLEAR,
@@ -63,6 +64,12 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "/mcp ", 0, 5)) {
             return new ParsedCommand(CommandType.MCP, trimmed.substring(5).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/plan")) {
+            return new ParsedCommand(CommandType.PLAN, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/plan ", 0, 6)) {
+            return new ParsedCommand(CommandType.PLAN, trimmed.substring(6).trim());
         }
         if (trimmed.equalsIgnoreCase("/model")) {
             return new ParsedCommand(CommandType.MODEL, null);

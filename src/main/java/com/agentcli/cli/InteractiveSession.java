@@ -9,6 +9,7 @@ import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.mcp.McpServerManager;
 import com.agentcli.memory.MemoryEntry;
+import com.agentcli.plan.PlanExecuteAgent;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -113,6 +114,10 @@ public class InteractiveSession {
             }
             case MCP -> {
                 handleMcp(command.payload(), out);
+                yield true;
+            }
+            case PLAN -> {
+                runPlan(command.payload(), out);
                 yield true;
             }
             case MEMORY_STATUS -> {
@@ -252,6 +257,27 @@ public class InteractiveSession {
         }
     }
 
+    private void runPlan(String payload, PrintStream out) {
+        if (payload == null || payload.isBlank()) {
+            out.println("用法: /plan <目标> —— 例如 /plan 先读 main.java 再写单元测试");
+            return;
+        }
+        PlanExecuteAgent planAgent = new PlanExecuteAgent(llmClient, agent.getToolRegistry());
+        StreamingConsoleListener listener = new StreamingConsoleListener(out);
+        planAgent.setListener(listener);
+        planAgent.setOut(out);
+        try {
+            String result = planAgent.run(payload);
+            listener.finishTurn();
+            if (result != null && !result.isBlank()) {
+                out.println(result);
+            }
+        } catch (IOException e) {
+            listener.finishTurn();
+            out.println("计划执行失败: " + e.getMessage());
+        }
+    }
+
     private HitlHandler getHitlHandler() {
         if (agent.getToolRegistry() instanceof HitlToolRegistry hitlRegistry) {
             return hitlRegistry.getHitlHandler();
@@ -283,6 +309,7 @@ public class InteractiveSession {
         out.println("  /memory clear       清空长期记忆");
         out.println("  /compact            手动压缩对话历史");
         out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
+        out.println("  /plan <目标>         先规划再分步执行复杂任务");
         out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
