@@ -1,17 +1,21 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
+import com.agentcli.audit.AuditLog;
+import com.agentcli.audit.AuditLlmClient;
 import com.agentcli.common.AppConfig;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.mcp.McpServerManager;
+import com.agentcli.store.SqliteStore;
 import com.agentcli.tool.ToolRegistry;
 
 import java.io.PrintStream;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
+import java.sql.SQLException;
 
 /**
  * AgentCLI 程序入口。
@@ -54,21 +58,34 @@ public final class Launcher {
             config.setDefaultProvider(CliArgs.normalizeProvider(cli.provider));
         }
 
-        LlmClient client = LlmClientFactory.createFromConfig(config);
-        if (client == null) {
+        LlmClient rawClient = LlmClientFactory.createFromConfig(config);
+        if (rawClient == null) {
             err.println("未找到可用的 API Key。请在 .env 或 ~/.agentcli/config.json 中配置至少一个 provider。");
             err.println("示例: GLM_API_KEY=your_key  或  DEEPSEEK_API_KEY=your_key");
             System.exit(1);
             return;
         }
 
+        // 审计层：基于 v0.9.0 的 SQLite 持久化，落盘失败则降级为无审计模式
+        AuditLog auditLog = null;
+        try {
+            auditLog = new AuditLog(SqliteStore.defaultStore());
+        } catch (SQLException e) {
+            err.println("[audit] 审计持久化不可用，已降级为无审计模式: " + e.getMessage());
+        }
+        LlmClient client = auditLog != null ? new AuditLlmClient(rawClient, auditLog) : rawClient;
+
         String projectPath = cli.projectPath != null && !cli.projectPath.isBlank()
                 ? cli.projectPath
                 : System.getProperty("user.dir");
         TerminalHitlHandler hitlHandler = new TerminalHitlHandler(cli.hitl);
-        ToolRegistry toolRegistry = new HitlToolRegistry(projectPath, hitlHandler);
+        ToolRegistry toolRegistry = auditLog != null
+                ? new HitlToolRegistry(projectPath, hitlHandler, auditLog)
+                : new HitlToolRegistry(projectPath, hitlHandler);
         ReActAgent agent = new ReActAgent(client, toolRegistry);
-        InteractiveSession session = new InteractiveSession(agent, client, config);
+        InteractiveSession session = auditLog != null
+                ? new InteractiveSession(agent, client, config, auditLog)
+                : new InteractiveSession(agent, client, config);
 
         McpServerManager mcpManager = new McpServerManager(toolRegistry, Path.of(projectPath));
         session.setMcpManager(mcpManager);

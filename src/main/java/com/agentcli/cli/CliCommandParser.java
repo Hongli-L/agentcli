@@ -19,7 +19,8 @@ final class CliCommandParser {
         MEMORY_LIST,
         MEMORY_CLEAR,
         MEMORY_SEARCH,
-        MEMORY_DELETE
+        MEMORY_DELETE,
+        AUDIT
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -97,6 +98,12 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "/mem delete ", 0, 12)) {
             return new ParsedCommand(CommandType.MEMORY_DELETE, trimmed.substring(12).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/audit")) {
+            return new ParsedCommand(CommandType.AUDIT, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/audit ", 0, 7)) {
+            return new ParsedCommand(CommandType.AUDIT, trimmed.substring(7).trim());
         }
         return ParsedCommand.none();
     }

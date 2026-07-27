@@ -1,6 +1,8 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
+import com.agentcli.audit.AuditLog;
+import com.agentcli.audit.AuditLlmClient;
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.AppConfig;
 import com.agentcli.hitl.HitlHandler;
@@ -26,13 +28,19 @@ public class InteractiveSession {
 
     private final ReActAgent agent;
     private final AppConfig config;
+    private final AuditLog auditLog;
     private LlmClient llmClient;
     private McpServerManager mcpManager;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
+        this(agent, llmClient, config, null);
+    }
+
+    public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config, AuditLog auditLog) {
         this.agent = agent;
         this.llmClient = llmClient;
         this.config = config;
+        this.auditLog = auditLog;
     }
 
     public void setMcpManager(McpServerManager mcpManager) {
@@ -151,6 +159,10 @@ public class InteractiveSession {
                 out.println(deleted ? "已删除记忆: " + command.payload() : "未找到记忆: " + command.payload());
                 yield true;
             }
+            case AUDIT -> {
+                handleAudit(command.payload(), out);
+                yield true;
+            }
             case NONE -> false;
         };
     }
@@ -200,8 +212,8 @@ public class InteractiveSession {
             out.println("无法切换到 " + provider + "：请检查 API Key 是否已配置。");
             return;
         }
-        llmClient = next;
-        agent.setLlmClient(next);
+        llmClient = auditLog != null ? new AuditLlmClient(next, auditLog) : next;
+        agent.setLlmClient(llmClient);
         config.setDefaultProvider(normalized);
         config.save();
         out.println("已切换: " + next.getProviderName() + " / " + next.getModelName());
@@ -233,6 +245,31 @@ public class InteractiveSession {
                 out.println("已清除全部放行记录。");
             }
             default -> out.println("未知 HITL 子命令: " + payload + "。用法: /hitl on | off | clear");
+        }
+    }
+
+    private void handleAudit(String payload, PrintStream out) {
+        if (auditLog == null) {
+            out.println("审计未启用（SQLite 持久化不可用）。");
+            return;
+        }
+        int limit = 20;
+        if (payload != null && !payload.isBlank()) {
+            try {
+                limit = Integer.parseInt(payload.trim());
+            } catch (NumberFormatException e) {
+                out.println("用法: /audit [数量] —— 例如 /audit 50");
+                return;
+            }
+        }
+        var entries = auditLog.query(limit);
+        if (entries.isEmpty()) {
+            out.println("暂无审计记录。");
+            return;
+        }
+        out.println("最近 " + entries.size() + " 条审计记录:");
+        for (var e : entries) {
+            out.println("  " + e.summaryLine());
         }
     }
 
@@ -346,6 +383,7 @@ public class InteractiveSession {
         out.println("  /plan <目标>         先规划再分步执行复杂任务");
         out.println("  /plan resume         恢复最近一个未完成的 plan 并续跑");
         out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
+        out.println("  /audit [数量]        查看最近的 LLM 调用与审批审计记录");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");

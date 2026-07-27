@@ -1,5 +1,6 @@
 package com.agentcli.hitl;
 
+import com.agentcli.audit.AuditLog;
 import com.agentcli.tool.ToolRegistry;
 
 /**
@@ -23,15 +24,26 @@ import com.agentcli.tool.ToolRegistry;
 public class HitlToolRegistry extends ToolRegistry {
 
     private final HitlHandler hitlHandler;
+    private final AuditLog auditLog;
 
     public HitlToolRegistry(HitlHandler hitlHandler) {
-        super();
-        this.hitlHandler = hitlHandler;
+        this(hitlHandler, null);
     }
 
     public HitlToolRegistry(String projectPath, HitlHandler hitlHandler) {
+        this(projectPath, hitlHandler, null);
+    }
+
+    public HitlToolRegistry(HitlHandler hitlHandler, AuditLog auditLog) {
+        super();
+        this.hitlHandler = hitlHandler;
+        this.auditLog = auditLog;
+    }
+
+    public HitlToolRegistry(String projectPath, HitlHandler hitlHandler, AuditLog auditLog) {
         super(projectPath);
         this.hitlHandler = hitlHandler;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -54,6 +66,10 @@ public class HitlToolRegistry extends ToolRegistry {
         ApprovalRequest request = ApprovalRequest.of(name, argumentsJson);
         ApprovalResult result = hitlHandler.requestApproval(request);
 
+        if (auditLog != null) {
+            auditLog.recordApproval(name, result.decision().name(), result.reason(), summarize(argumentsJson));
+        }
+
         if (result.isRejected()) {
             String reason = result.reason() != null && !result.reason().isBlank()
                     ? result.reason()
@@ -68,6 +84,15 @@ public class HitlToolRegistry extends ToolRegistry {
         // 批准执行（含修改参数）
         String effectiveArgs = result.effectiveArguments(argumentsJson);
         return super.doExecuteTool(name, effectiveArgs);
+    }
+
+    /** 把工具参数截断成审计可读的摘要（避免把完整参数落盘）。 */
+    private static String summarize(String argumentsJson) {
+        if (argumentsJson == null) {
+            return "";
+        }
+        int max = 120;
+        return argumentsJson.length() <= max ? argumentsJson : argumentsJson.substring(0, max) + "…";
     }
 
     public HitlHandler getHitlHandler() {
