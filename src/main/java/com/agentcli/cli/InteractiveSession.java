@@ -15,6 +15,8 @@ import com.agentcli.plan.PlanExecuteAgent;
 import com.agentcli.plan.ExecutionPlan;
 import com.agentcli.plan.PlanStore;
 import com.agentcli.plan.Task;
+import com.agentcli.skill.SkillRegistry;
+import com.agentcli.skill.SkillStateStore;
 import com.agentcli.store.SqliteStore;
 
 import java.io.IOException;
@@ -31,16 +33,25 @@ public class InteractiveSession {
     private final AuditLog auditLog;
     private LlmClient llmClient;
     private McpServerManager mcpManager;
+    private final SkillRegistry skillRegistry;
+    private final SkillStateStore skillStateStore;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
-        this(agent, llmClient, config, null);
+        this(agent, llmClient, config, null, null, null);
     }
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config, AuditLog auditLog) {
+        this(agent, llmClient, config, auditLog, null, null);
+    }
+
+    public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config,
+                             AuditLog auditLog, SkillRegistry skillRegistry, SkillStateStore skillStateStore) {
         this.agent = agent;
         this.llmClient = llmClient;
         this.config = config;
         this.auditLog = auditLog;
+        this.skillRegistry = skillRegistry;
+        this.skillStateStore = skillStateStore;
     }
 
     public void setMcpManager(McpServerManager mcpManager) {
@@ -163,6 +174,10 @@ public class InteractiveSession {
                 handleAudit(command.payload(), out);
                 yield true;
             }
+            case SKILL -> {
+                handleSkill(command.payload(), out);
+                yield true;
+            }
             case NONE -> false;
         };
     }
@@ -270,6 +285,35 @@ public class InteractiveSession {
         out.println("最近 " + entries.size() + " 条审计记录:");
         for (var e : entries) {
             out.println("  " + e.summaryLine());
+        }
+    }
+
+    private void handleSkill(String payload, PrintStream out) {
+        if (skillRegistry == null) {
+            out.println("Skill 系统未初始化（请联系开发者）。");
+            return;
+        }
+        if (payload == null || payload.isBlank()) {
+            out.println(SkillCommandHandler.list(skillRegistry));
+            return;
+        }
+        String[] parts = payload.trim().split("\\s+", 2);
+        String sub = parts[0].toLowerCase();
+        String arg = parts.length > 1 ? parts[1].trim() : "";
+        switch (sub) {
+            case "list" -> out.println(SkillCommandHandler.list(skillRegistry));
+            case "show" -> out.println(SkillCommandHandler.show(skillRegistry, arg));
+            case "on", "enable" ->
+                    out.println(SkillCommandHandler.enable(skillRegistry, skillStateStore, arg));
+            case "off", "disable" ->
+                    out.println(SkillCommandHandler.disable(skillRegistry, skillStateStore, arg));
+            case "reload" -> {
+                skillRegistry.reload();
+                out.println(SkillCommandHandler.startupSummary(skillRegistry));
+                out.println(SkillCommandHandler.list(skillRegistry));
+            }
+            default -> out.println("未知 skill 子命令: " + sub
+                    + "。用法: /skill [list|show <name>|on <name>|off <name>|reload]");
         }
     }
 
@@ -384,6 +428,10 @@ public class InteractiveSession {
         out.println("  /plan resume         恢复最近一个未完成的 plan 并续跑");
         out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
         out.println("  /audit [数量]        查看最近的 LLM 调用与审批审计记录");
+        out.println("  /skill [list]        列出已加载 skill 与启用状态");
+        out.println("  /skill show <name>   查看某个 skill 的完整 SKILL.md");
+        out.println("  /skill on/off <name> 启用 / 禁用某个 skill");
+        out.println("  /skill reload         重新扫描 skill 目录");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");

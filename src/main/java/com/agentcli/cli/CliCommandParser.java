@@ -20,7 +20,8 @@ final class CliCommandParser {
         MEMORY_CLEAR,
         MEMORY_SEARCH,
         MEMORY_DELETE,
-        AUDIT
+        AUDIT,
+        SKILL
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -104,6 +105,12 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "/audit ", 0, 7)) {
             return new ParsedCommand(CommandType.AUDIT, trimmed.substring(7).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/skill") || trimmed.equalsIgnoreCase("/skills")) {
+            return new ParsedCommand(CommandType.SKILL, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/skill ", 0, 7)) {
+            return new ParsedCommand(CommandType.SKILL, trimmed.substring(7).trim());
         }
         return ParsedCommand.none();
     }

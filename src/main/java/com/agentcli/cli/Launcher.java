@@ -9,8 +9,11 @@ import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.mcp.McpServerManager;
+import com.agentcli.skill.SkillRegistry;
+import com.agentcli.skill.SkillStateStore;
 import com.agentcli.store.SqliteStore;
 import com.agentcli.tool.ToolRegistry;
+import com.agentcli.tool.builtin.LoadSkillTool;
 
 import java.io.PrintStream;
 import java.nio.charset.Charset;
@@ -79,13 +82,24 @@ public final class Launcher {
                 ? cli.projectPath
                 : System.getProperty("user.dir");
         TerminalHitlHandler hitlHandler = new TerminalHitlHandler(cli.hitl);
+
+        // 技能系统：扫描 user / project 两级目录，注册 load_skill 工具
+        Path userSkillsDir = Path.of(System.getProperty("user.home"), ".agentcli", "skills");
+        Path projectSkillsDir = Path.of(projectPath, ".agentcli", "skills");
+        Path skillsStateFile = Path.of(System.getProperty("user.home"), ".agentcli", "skills.json");
+        SkillStateStore skillStateStore = new SkillStateStore(skillsStateFile);
+        SkillRegistry skillRegistry = new SkillRegistry(userSkillsDir, projectSkillsDir, skillStateStore);
+        skillRegistry.reload();
+
         ToolRegistry toolRegistry = auditLog != null
                 ? new HitlToolRegistry(projectPath, hitlHandler, auditLog)
                 : new HitlToolRegistry(projectPath, hitlHandler);
+        toolRegistry.register(new LoadSkillTool(skillRegistry));
         ReActAgent agent = new ReActAgent(client, toolRegistry);
+        agent.setSkillRegistry(skillRegistry);
         InteractiveSession session = auditLog != null
-                ? new InteractiveSession(agent, client, config, auditLog)
-                : new InteractiveSession(agent, client, config);
+                ? new InteractiveSession(agent, client, config, auditLog, skillRegistry, skillStateStore)
+                : new InteractiveSession(agent, client, config, null, skillRegistry, skillStateStore);
 
         McpServerManager mcpManager = new McpServerManager(toolRegistry, Path.of(projectPath));
         session.setMcpManager(mcpManager);

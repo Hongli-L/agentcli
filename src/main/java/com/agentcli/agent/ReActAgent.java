@@ -3,6 +3,8 @@ package com.agentcli.agent;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.memory.ConversationHistoryCompactor;
+import com.agentcli.skill.SkillIndexFormatter;
+import com.agentcli.skill.SkillRegistry;
 import com.agentcli.memory.MemoryManager;
 import com.agentcli.memory.TokenBudget;
 import com.agentcli.tool.ToolExecutionResult;
@@ -29,6 +31,7 @@ public class ReActAgent {
     private final ConversationHistoryCompactor historyCompactor;
     private final List<LlmClient.Message> conversationHistory = new ArrayList<>();
     private AgentRunListener listener = AgentRunListener.NO_OP;
+    private SkillRegistry skillRegistry;
 
     public ReActAgent(LlmClient llmClient) {
         this(llmClient, new ToolRegistry());
@@ -52,6 +55,11 @@ public class ReActAgent {
 
     public void setListener(AgentRunListener listener) {
         this.listener = listener == null ? AgentRunListener.NO_OP : listener;
+    }
+
+    /** 注入技能注册表，使系统提示可注入已启用 skill 的索引段。 */
+    public void setSkillRegistry(SkillRegistry skillRegistry) {
+        this.skillRegistry = skillRegistry;
     }
 
     public ToolRegistry getToolRegistry() {
@@ -161,8 +169,18 @@ public class ReActAgent {
 
     private void updateSystemPrompt(String userQuery) {
         String memoryContext = memoryManager.buildContextForQuery(userQuery);
-        conversationHistory.set(0, LlmClient.Message.system(
-                SystemPrompt.forAgent(toolRegistry, memoryContext)));
+        conversationHistory.set(0, LlmClient.Message.system(buildSystemPrompt(memoryContext)));
+    }
+
+    private String buildSystemPrompt(String memoryContext) {
+        StringBuilder prompt = new StringBuilder(SystemPrompt.forAgent(toolRegistry, memoryContext));
+        if (skillRegistry != null) {
+            String index = SkillIndexFormatter.format(skillRegistry.enabledSkills());
+            if (!index.isBlank()) {
+                prompt.append("\n\n").append(index);
+            }
+        }
+        return prompt.toString();
     }
 
     private void maybeCompactHistory() {
@@ -193,7 +211,7 @@ public class ReActAgent {
 
     private void resetHistory() {
         conversationHistory.clear();
-        conversationHistory.add(LlmClient.Message.system(SystemPrompt.forAgent(toolRegistry)));
+        conversationHistory.add(LlmClient.Message.system(buildSystemPrompt("")));
     }
 
     public record CompactionResult(boolean compacted, int beforeTokens, int afterTokens, String error) {

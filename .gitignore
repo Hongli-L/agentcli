@@ -24,6 +24,7 @@ target/
 
 # 内部参考文件
 ROADMAP.md
+INTERVIEW_PREP.md
 
 # 操作系统
 .DS_Store
