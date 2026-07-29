@@ -10,6 +10,7 @@ import com.agentcli.memory.TokenBudget;
 import com.agentcli.tool.ToolExecutionResult;
 import com.agentcli.tool.ToolInvocation;
 import com.agentcli.tool.ToolRegistry;
+import com.agentcli.lsp.LspContextInjector;
 import com.agentcli.tool.builtin.SaveMemoryTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +33,7 @@ public class ReActAgent {
     private final List<LlmClient.Message> conversationHistory = new ArrayList<>();
     private AgentRunListener listener = AgentRunListener.NO_OP;
     private SkillRegistry skillRegistry;
+    private LspContextInjector lspInjector;
 
     public ReActAgent(LlmClient llmClient) {
         this(llmClient, new ToolRegistry());
@@ -60,6 +62,13 @@ public class ReActAgent {
     /** 注入技能注册表，使系统提示可注入已启用 skill 的索引段。 */
     public void setSkillRegistry(SkillRegistry skillRegistry) {
         this.skillRegistry = skillRegistry;
+    }
+
+    /**
+     * 注入 LSP 诊断回灌钩子（可选，为 null 时完全不干预主流程）。
+     */
+    public void setLspInjector(LspContextInjector injector) {
+        this.lspInjector = injector;
     }
 
     public ToolRegistry getToolRegistry() {
@@ -142,6 +151,14 @@ public class ReActAgent {
 
                     listener.onToolCalls(response.toolCalls());
                     List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls());
+                    // LSP 诊断回灌钩子：在结果写入对话历史之前注入（null 时零干预）
+                    if (lspInjector != null) {
+                        try {
+                            toolResults = lspInjector.afterToolResults(toolResults);
+                        } catch (Exception e) {
+                            log.warn("LSP 诊断注入失败，已忽略：{}", e.getMessage());
+                        }
+                    }
                     for (ToolExecutionResult toolResult : toolResults) {
                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
                         listener.onToolResult(toolResult);

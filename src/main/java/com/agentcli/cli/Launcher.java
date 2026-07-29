@@ -8,6 +8,12 @@ import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.lsp.LspContextInjector;
+import com.agentcli.lsp.LspDiagnosticsFormatter;
+import com.agentcli.lsp.LspLanguageDetector;
+import com.agentcli.lsp.LspServerManager;
+import com.agentcli.lsp.config.LspConfig;
+import com.agentcli.lsp.config.LspConfigLoader;
 import com.agentcli.mcp.McpServerManager;
 import com.agentcli.skill.SkillRegistry;
 import com.agentcli.skill.SkillStateStore;
@@ -97,9 +103,23 @@ public final class Launcher {
         toolRegistry.register(new LoadSkillTool(skillRegistry));
         ReActAgent agent = new ReActAgent(client, toolRegistry);
         agent.setSkillRegistry(skillRegistry);
+
+        LspServerManager lspManager = null;
+        LspConfig lspConfig = null;
+        if (cli.lsp) {
+            lspConfig = new LspConfigLoader(projectPath).load();
+            lspManager = new LspServerManager(lspConfig);
+            LspContextInjector lspInjector = new LspContextInjector(
+                    lspManager, lspConfig, new LspLanguageDetector(), new LspDiagnosticsFormatter());
+            agent.setLspInjector(lspInjector);
+        }
+
         InteractiveSession session = auditLog != null
                 ? new InteractiveSession(agent, client, config, auditLog, skillRegistry, skillStateStore)
                 : new InteractiveSession(agent, client, config, null, skillRegistry, skillStateStore);
+        if (lspManager != null && lspConfig != null) {
+            session.setLspManager(lspManager, lspConfig);
+        }
 
         McpServerManager mcpManager = new McpServerManager(toolRegistry, Path.of(projectPath));
         session.setMcpManager(mcpManager);
@@ -142,6 +162,7 @@ public final class Launcher {
         out.println("  --project, -C DIR     指定项目根目录（工具沙箱范围）");
         out.println("  --hitl                启动时开启人工审批模式");
         out.println("  --mcp                 启动时自动加载并连接 MCP 服务器");
+        out.println("  --lsp                 启动 LSP 诊断集成（可用 /lsp start 拉起语言服务器）");
         out.println();
         out.println("不带参数启动时进入交互式 REPL。");
         InteractiveSession.printSessionHelp(out);

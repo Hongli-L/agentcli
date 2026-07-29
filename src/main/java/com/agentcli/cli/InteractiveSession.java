@@ -17,7 +17,12 @@ import com.agentcli.plan.PlanStore;
 import com.agentcli.plan.Task;
 import com.agentcli.skill.SkillRegistry;
 import com.agentcli.skill.SkillStateStore;
+import com.agentcli.lsp.LspCommandHandler;
+import com.agentcli.lsp.LspDiagnosticsFormatter;
+import com.agentcli.lsp.LspServerManager;
+import com.agentcli.lsp.config.LspConfig;
 import com.agentcli.store.SqliteStore;
+import com.agentcli.tool.ToolRegistry;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -35,6 +40,8 @@ public class InteractiveSession {
     private McpServerManager mcpManager;
     private final SkillRegistry skillRegistry;
     private final SkillStateStore skillStateStore;
+    private LspServerManager lspManager;
+    private LspCommandHandler lspHandler;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
         this(agent, llmClient, config, null, null, null);
@@ -56,6 +63,15 @@ public class InteractiveSession {
 
     public void setMcpManager(McpServerManager mcpManager) {
         this.mcpManager = mcpManager;
+    }
+
+    public void setLspManager(LspServerManager lspManager, LspConfig lspConfig) {
+        this.lspManager = lspManager;
+        if (lspManager != null && lspConfig != null) {
+            this.lspHandler = new LspCommandHandler(
+                    lspManager, lspConfig, new LspDiagnosticsFormatter(),
+                    lspConfig.projectDir());
+        }
     }
 
     public void run(ReplReader input, PrintStream out) throws IOException {
@@ -82,6 +98,9 @@ public class InteractiveSession {
                 runTurn(line, out);
             }
         } finally {
+            if (lspManager != null) {
+                lspManager.stopAll();
+            }
             input.close();
         }
     }
@@ -176,6 +195,10 @@ public class InteractiveSession {
             }
             case SKILL -> {
                 handleSkill(command.payload(), out);
+                yield true;
+            }
+            case LSP -> {
+                handleLsp(command.payload(), out);
                 yield true;
             }
             case NONE -> false;
@@ -317,6 +340,15 @@ public class InteractiveSession {
         }
     }
 
+    private void handleLsp(String payload, PrintStream out) {
+        if (lspManager == null || lspHandler == null) {
+            out.println("LSP 服务器管理器未初始化（使用 --lsp 参数启动）。");
+            return;
+        }
+        String cmd = (payload == null || payload.isBlank()) ? "lsp" : "lsp " + payload;
+        out.println(lspHandler.handle(cmd));
+    }
+
     private void handleMcp(String payload, PrintStream out) {
         if (mcpManager == null) {
             out.println("MCP 服务器管理器未初始化（使用 --mcp 参数启动）。");
@@ -432,6 +464,7 @@ public class InteractiveSession {
         out.println("  /skill show <name>   查看某个 skill 的完整 SKILL.md");
         out.println("  /skill on/off <name> 启用 / 禁用某个 skill");
         out.println("  /skill reload         重新扫描 skill 目录");
+        out.println("  /lsp [start|stop|status|diagnostics|config]  LSP 诊断集成");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");

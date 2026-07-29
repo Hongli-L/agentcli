@@ -21,7 +21,8 @@ final class CliCommandParser {
         MEMORY_SEARCH,
         MEMORY_DELETE,
         AUDIT,
-        SKILL
+        SKILL,
+        LSP
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -111,6 +112,18 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "/skill ", 0, 7)) {
             return new ParsedCommand(CommandType.SKILL, trimmed.substring(7).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/lsp")) {
+            return new ParsedCommand(CommandType.LSP, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/lsp ", 0, 5)) {
+            return new ParsedCommand(CommandType.LSP, trimmed.substring(5).trim());
+        }
+        if (trimmed.equalsIgnoreCase("lsp")) {
+            return new ParsedCommand(CommandType.LSP, null);
+        }
+        if (trimmed.regionMatches(true, 0, "lsp ", 0, 4)) {
+            return new ParsedCommand(CommandType.LSP, trimmed.substring(4).trim());
         }
         return ParsedCommand.none();
     }
