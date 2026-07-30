@@ -13,6 +13,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.io.Writer;
 import java.nio.charset.Charset;
 
 /**
@@ -22,6 +23,14 @@ import java.nio.charset.Charset;
 public interface ReplReader extends AutoCloseable {
 
     String readLine(String prompt) throws IOException;
+
+    /**
+     * 安全地异步打印一行（不抢占 REPL 输入）。默认实现直接 {@link System#out} 打印；
+     * JLine 实现覆写为 {@code terminal.writer()} 写入并刷新，Buffered 实现覆写为 {@code out.println}。
+     */
+    default void printAsync(String line) {
+        System.out.println(line == null ? "" : line);
+    }
 
     /** 兼容旧调用：不注入任何增强能力（等价于 {@link #create(Charset, PrintStream, ReplEnhancements)} 传 null）。 */
     static ReplReader create(Charset charset, PrintStream out) throws IOException {
@@ -99,6 +108,19 @@ public interface ReplReader extends AutoCloseable {
         }
 
         @Override
+        public void printAsync(String line) {
+            // jline 安全打印：经 terminal.writer() 写入并刷新，不抢占输入行。
+            try {
+                Writer w = terminal.writer();
+                w.write(line == null ? "" : line);
+                w.write(System.lineSeparator());
+                w.flush();
+            } catch (IOException ignored) {
+                // best-effort：打印失败不影响主流程
+            }
+        }
+
+        @Override
         public void close() throws IOException {
             History history = lineReader.getHistory();
             if (history != null) {
@@ -132,6 +154,12 @@ public interface ReplReader extends AutoCloseable {
                 out.flush();
             }
             return reader.readLine();
+        }
+
+        @Override
+        public void printAsync(String line) {
+            out.println(line == null ? "" : line);
+            out.flush();
         }
     }
 }

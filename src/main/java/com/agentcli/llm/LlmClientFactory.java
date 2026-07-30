@@ -8,12 +8,19 @@ import java.util.Locale;
 /**
  * 根据配置 / 环境变量创建对应的 {@link LlmClient}。
  *
- * 支持三类 provider：glm、deepseek、openai（通用 OpenAI 兼容）。
- * 常见别名（kimi/moonshot/step/stepfun/oai/generic）统一归一到 openai 通用客户端。
+ * 支持 provider：glm、deepseek、kimi、step、openai（通用 OpenAI 兼容）。
+ * 常见别名统一归一到规范 provider key：
+ * <ul>
+ *   <li>glm / zhipu / zhipuai -> glm</li>
+ *   <li>deepseek -> deepseek</li>
+ *   <li>kimi / moonshot / moonshotai / moonshot-ai -> kimi</li>
+ *   <li>step / stepfun / step-fun -> step</li>
+ *   <li>openai / oai / generic -> openai（通用网关）</li>
+ * </ul>
  */
 public final class LlmClientFactory {
 
-    private static final String[] FALLBACK_ORDER = {"glm", "deepseek", "openai"};
+    private static final String[] FALLBACK_ORDER = {"glm", "deepseek", "kimi", "step", "openai"};
 
     private LlmClientFactory() {
     }
@@ -33,6 +40,8 @@ public final class LlmClientFactory {
         return switch (normalized) {
             case "glm" -> new GlmClient(apiKey, model, baseUrl);
             case "deepseek" -> new DeepSeekClient(apiKey, model, baseUrl);
+            case "kimi" -> new KimiCompatibleClient(apiKey, model, baseUrl);
+            case "step" -> new StepCompatibleClient(apiKey, model, baseUrl);
             case "openai" -> new GenericOpenAiClient(apiKey, model, baseUrl);
             default -> null;
         };
@@ -54,7 +63,7 @@ public final class LlmClientFactory {
 
     /** 已知 provider 名列表（供 /model 值补全使用，未来扩展只需改这里）。 */
     public static List<String> knownProviders() {
-        return List.of("glm", "deepseek", "openai");
+        return List.of("glm", "deepseek", "kimi", "step", "openai");
     }
 
     private static String normalizeProvider(String provider) {
@@ -62,7 +71,9 @@ public final class LlmClientFactory {
         return switch (normalized) {
             case "glm", "zhipu", "zhipuai" -> "glm";
             case "deepseek" -> "deepseek";
-            case "openai", "oai", "generic", "kimi", "moonshot", "step", "stepfun" -> "openai";
+            case "kimi", "moonshot", "moonshotai", "moonshot-ai" -> "kimi";
+            case "step", "stepfun", "step-fun" -> "step";
+            case "openai", "oai", "generic" -> "openai";
             default -> normalized;
         };
     }

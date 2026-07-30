@@ -45,9 +45,10 @@ class ReplEnhancementsTest {
         PrintStream out = new PrintStream(new ByteArrayOutputStream(), true);
         // 无系统控制台环境下 isJlineAvailable() 为假（非 TTY 门控）
         assertFalse(ReplReader.isJlineAvailable());
+        boolean historyExistedBefore = Files.exists(ReplHistory.DEFAULT_PATH);
         ReplReader reader = ReplReader.create(StandardCharsets.UTF_8, out, null);
         assertEquals("BufferedReplReader", reader.getClass().getSimpleName());
-        Path historyPath = ReplHistory.DEFAULT_PATH;
-        assertFalse(Files.exists(historyPath), "非 TTY 不应创建 ~/.agentcli/history");
+        // 非 TTY 构造不应改变 ~/.agentcli/history 的存在状态（验证无副作用，且不依赖其初始不存在、不误删用户真实历史）
+        assertEquals(historyExistedBefore, Files.exists(ReplHistory.DEFAULT_PATH), "非 TTY 构造不应改变 ~/.agentcli/history 存在状态");
     }
 }

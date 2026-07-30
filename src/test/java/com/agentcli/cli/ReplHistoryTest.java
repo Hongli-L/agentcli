@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReplHistoryTest {
@@ -48,8 +49,12 @@ class ReplHistoryTest {
 
     @Test
     void constructorDoesNotCreateHistoryFile() {
-        // 仅构造不应创建 ~/.agentcli 目录或 history 文件（避免非 TTY 副作用）
+        // 仅构造不应创建 ~/.agentcli 目录或 history 文件（避免非 TTY 副作用）。
+        // 用「构造前后存在状态不变」判定，既验证无副作用、又不依赖 ~/.agentcli/history 初始不存在
+        //（该文件可能已由实际 CLI 使用或其他测试先行创建，避免误报与误删用户真实历史）。
         Path historyPath = ReplHistory.DEFAULT_PATH;
-        assertFalse(Files.exists(historyPath), "构造 ReplHistory 不应创建历史文件");
+        boolean existedBefore = Files.exists(historyPath);
+        new ReplHistory();
+        assertEquals(existedBefore, Files.exists(historyPath), "构造 ReplHistory 不应改变历史文件存在状态");
     }
 }

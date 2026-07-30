@@ -1,11 +1,10 @@
 package com.agentcli.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.agentcli.mcp.jsonrpc.JsonRpcClient;
 import com.agentcli.mcp.jsonrpc.JsonRpcException;
+import com.agentcli.mcp.mention.MentionResolver;
+import com.agentcli.mcp.notify.NotificationDispatcher;
+import com.agentcli.mcp.notify.NotificationPresenter;
 import com.agentcli.mcp.protocol.McpCallToolRequest;
 import com.agentcli.mcp.protocol.McpCallToolResult;
 import com.agentcli.mcp.protocol.McpInitializeRequest;
@@ -16,9 +15,16 @@ import com.agentcli.mcp.resources.McpResourceContent;
 import com.agentcli.mcp.resources.McpResourceDescriptor;
 import com.agentcli.mcp.transport.McpTransport;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class McpClient implements AutoCloseable {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -27,12 +33,27 @@ public class McpClient implements AutoCloseable {
     private final String serverName;
     private final JsonRpcClient rpc;
     private final McpTransport transport;
+    private final MentionResolver mentionResolver;
+    private final NotificationDispatcher notificationDispatcher;
     private volatile JsonNode serverCapabilities = JsonNodeFactory.instance.objectNode();
 
+    /** 兼容构造：mention / presenter 均为 null -> 完全降级（不解析 @mention、不分发通知）。 */
     public McpClient(String serverName, McpTransport transport) {
+        this(serverName, transport, null, null);
+    }
+
+    /**
+     * 新增构造：注入 projectDir（@mention 解析根）与 NotificationPresenter（通知展示）。
+     * 任一为 null 时对应能力自动降级。
+     */
+    public McpClient(String serverName, McpTransport transport, Path projectDir,
+                     NotificationPresenter presenter) {
         this.serverName = serverName;
         this.transport = transport;
         this.rpc = new JsonRpcClient(transport);
+        this.mentionResolver = projectDir != null ? new MentionResolver(projectDir) : null;
+        this.notificationDispatcher = presenter != null
+                ? new NotificationDispatcher(serverName, presenter) : null;
     }
 
     public void initialize() throws IOException {
@@ -41,6 +62,16 @@ public class McpClient implements AutoCloseable {
         serverCapabilities = result == null ? JsonNodeFactory.instance.objectNode()
                 : result.path("capabilities");
         rpc.sendNotification("notifications/initialized", JsonNodeFactory.instance.objectNode());
+        // v0.14.0：注册通知分发器（若有 presenter）。零改动 McpTransport 契约，
+        // 直接复用既有 JsonRpcClient.onNotification 通道。
+        if (notificationDispatcher != null) {
+            rpc.onNotification(notificationDispatcher::accept);
+        }
+    }
+
+    /** 委派注册任意通知监听器（测试 / 灵活接线用）。 */
+    public void registerNotificationListener(Consumer<JsonNode> listener) {
+        rpc.onNotification(listener);
     }
 
     private int initializeTimeoutSeconds() {
@@ -80,6 +111,14 @@ public class McpClient implements AutoCloseable {
     }
 
     public String callTool(String toolName, String argumentsJson) throws IOException {
+        // v0.14.0：@mention 注入落点。失败回退原文，绝不冒泡到主流程。
+        if (mentionResolver != null && argumentsJson != null && !argumentsJson.isBlank()) {
+            try {
+                argumentsJson = mentionResolver.resolveJson(argumentsJson);
+            } catch (Exception ignored) {
+                // 解析异常：保留原始 argumentsJson 继续
+            }
+        }
         JsonNode args;
         if (argumentsJson == null || argumentsJson.isBlank()) {
             args = JsonNodeFactory.instance.objectNode();

@@ -43,16 +43,54 @@ class LlmClientFactoryTest {
     }
 
     @Test
-    void createsGenericOpenAiClientFromAliasWithCustomBaseUrl() {
-        AppConfig config = configWith("openai", "test-key", "kimi-k2", "https://api.example.com/v1");
+    void createsKimiCompatibleClientFromKimiAliasWithCustomBaseUrl() {
+        AppConfig config = configWith("kimi", "test-key", "kimi-k2", "https://api.example.com/v1");
 
         LlmClient client = LlmClientFactory.create("kimi", config);
 
-        GenericOpenAiClient generic = assertInstanceOf(GenericOpenAiClient.class, client);
+        KimiCompatibleClient kimi = assertInstanceOf(KimiCompatibleClient.class, client);
+        assertEquals("kimi", kimi.getProviderName());
+        assertEquals("kimi-k2", kimi.getModelName());
+        assertTrue(kimi.getApiUrl().endsWith("/chat/completions"), kimi.getApiUrl());
+        assertEquals("https://api.example.com/v1/chat/completions", kimi.getApiUrl());
+    }
+
+    @Test
+    void createsKimiCompatibleClientFromMoonshotAlias() {
+        AppConfig config = configWith("kimi", "test-key", "kimi-k2.6", null);
+
+        LlmClient client = LlmClientFactory.create("moonshot", config);
+
+        KimiCompatibleClient kimi = assertInstanceOf(KimiCompatibleClient.class, client);
+        assertEquals("kimi", kimi.getProviderName());
+        assertEquals("kimi-k2.6", kimi.getModelName());
+    }
+
+    @Test
+    void createsStepCompatibleClientFromStepAliasWithCustomBaseUrl() {
+        AppConfig config = configWith("step", "test-key", "step-3.5-flash", "https://api.example.com/v1");
+
+        LlmClient client = LlmClientFactory.create("step", config);
+
+        StepCompatibleClient step = assertInstanceOf(StepCompatibleClient.class, client);
+        assertEquals("step", step.getProviderName());
+        assertEquals("step-3.5-flash", step.getModelName());
+        assertTrue(step.getApiUrl().endsWith("/chat/completions"), step.getApiUrl());
+        assertEquals("https://api.example.com/v1/chat/completions", step.getApiUrl());
+    }
+
+    @Test
+    void createsGenericOpenAiClientFromOpenaiAlias() {
+        AppConfig config = configWith("openai", "test-key", "gpt-4o", "https://api.example.com/v1");
+
+        // 原 kimi/step 别名组已拆出，openai/oai/generic 仍归一到通用网关，确保 generic 路径不被破坏
+        LlmClient oai = LlmClientFactory.create("oai", config);
+        GenericOpenAiClient generic = assertInstanceOf(GenericOpenAiClient.class, oai);
         assertEquals("openai", generic.getProviderName());
-        assertEquals("kimi-k2", generic.getModelName());
-        assertTrue(generic.getApiUrl().endsWith("/chat/completions"), generic.getApiUrl());
-        assertEquals("https://api.example.com/v1/chat/completions", generic.getApiUrl());
+        assertEquals("gpt-4o", generic.getModelName());
+
+        LlmClient genericAlias = LlmClientFactory.create("generic", config);
+        assertInstanceOf(GenericOpenAiClient.class, genericAlias);
     }
 
     @Test

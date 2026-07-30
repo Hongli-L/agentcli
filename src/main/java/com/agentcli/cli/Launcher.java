@@ -19,6 +19,7 @@ import com.agentcli.lsp.LspServerManager;
 import com.agentcli.lsp.config.LspConfig;
 import com.agentcli.lsp.config.LspConfigLoader;
 import com.agentcli.mcp.McpServerManager;
+import com.agentcli.mcp.mention.MentionResolver;
 import com.agentcli.skill.SkillRegistry;
 import com.agentcli.skill.SkillStateStore;
 import com.agentcli.store.SqliteStore;
@@ -152,6 +153,9 @@ public final class Launcher {
             enh = new ReplEnhancements(completer, highlighter, history);
         }
         ReplReader input = ReplReader.create(consoleCharset, consoleOut, enh);
+        // v0.14.0：MCP 通知打印通道（复用 ReplReader.printAsync，安全不抢输入）+ REPL 自由文本 @mention 解析器
+        mcpManager.setNotificationPrinter(input::printAsync);
+        session.setMentionResolver(new MentionResolver(Path.of(projectPath)));
         session.run(input, consoleOut);
     }
 

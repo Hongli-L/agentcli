@@ -10,6 +10,7 @@ import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.mcp.McpServerManager;
+import com.agentcli.mcp.mention.MentionResolver;
 import com.agentcli.memory.MemoryEntry;
 import com.agentcli.plan.PlanExecuteAgent;
 import com.agentcli.plan.ExecutionPlan;
@@ -42,6 +43,7 @@ public class InteractiveSession {
     private final SkillStateStore skillStateStore;
     private LspServerManager lspManager;
     private LspCommandHandler lspHandler;
+    private MentionResolver mentionResolver;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
         this(agent, llmClient, config, null, null, null);
@@ -63,6 +65,11 @@ public class InteractiveSession {
 
     public void setMcpManager(McpServerManager mcpManager) {
         this.mcpManager = mcpManager;
+    }
+
+    /** v0.14.0：注入 @mention 解析器，供自然语言轮（NONE）解析自由文本。 */
+    public void setMentionResolver(MentionResolver mentionResolver) {
+        this.mentionResolver = mentionResolver;
     }
 
     public void setLspManager(LspServerManager lspManager, LspConfig lspConfig) {
@@ -93,6 +100,11 @@ public class InteractiveSession {
                 }
                 if (line.isBlank()) {
                     continue;
+                }
+
+                // v0.14.0：仅对自然语言轮（NONE）解析 @mention；/命令 轮不解析以免破坏命令语法。
+                if (command.type() == CliCommandParser.CommandType.NONE && mentionResolver != null) {
+                    line = mentionResolver.resolve(line);
                 }
 
                 runTurn(line, out);

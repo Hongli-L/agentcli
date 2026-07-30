@@ -7,6 +7,8 @@ import com.agentcli.mcp.prompt.McpPromptTool;
 import com.agentcli.mcp.protocol.McpToolDescriptor;
 import com.agentcli.mcp.resources.McpResourceBridge;
 import com.agentcli.mcp.resources.McpResourceTool;
+import com.agentcli.mcp.notify.NotificationPresenter;
+import com.agentcli.mcp.notify.TerminalNotificationPresenter;
 import com.agentcli.mcp.transport.HttpTransport;
 import com.agentcli.mcp.transport.McpTransport;
 import com.agentcli.mcp.transport.StdioTransport;
@@ -22,11 +24,13 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public class McpServerManager implements AutoCloseable {
     private final ToolRegistry toolRegistry;
     private final Path projectDir;
     private final Map<String, McpServer> servers = new ConcurrentHashMap<>();
+    private Consumer<String> notificationPrinter;
 
     public McpServerManager(ToolRegistry toolRegistry, Path projectDir) {
         this.toolRegistry = toolRegistry;
@@ -38,6 +42,11 @@ public class McpServerManager implements AutoCloseable {
         Map<String, McpServerConfig> configs = loader.load();
         servers.clear();
         configs.forEach((name, config) -> servers.put(name, new McpServer(name, config)));
+    }
+
+    /** 设置通知打印通道（接线到 ReplReader.printAsync）。未设置时通知能力降级为 null。 */
+    public void setNotificationPrinter(Consumer<String> printer) {
+        this.notificationPrinter = printer;
     }
 
     public void startAll() {
@@ -107,7 +116,10 @@ public class McpServerManager implements AutoCloseable {
             McpConfigLoader loader = new McpConfigLoader(projectDir);
             loader.prepare(server.config());
             McpTransport transport = createTransport(server.config());
-            McpClient client = new McpClient(server.name(), transport);
+            // v0.14.0：注入 projectDir 与 NotificationPresenter（通知能力）。
+            NotificationPresenter presenter = notificationPrinter != null
+                    ? new TerminalNotificationPresenter(notificationPrinter) : null;
+            McpClient client = new McpClient(server.name(), transport, projectDir, presenter);
             client.initialize();
             List<McpToolDescriptor> descriptors = new ArrayList<>();
             descriptors.addAll(client.listTools());
