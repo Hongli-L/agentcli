@@ -86,11 +86,30 @@ public final class AnsiStyle {
         return ENABLED;
     }
 
+    /** 斜杠命令高亮色（cyan 36），供 {@link com.agentcli.common.AgentCliHighlighter} 复用。 */
+    public static int keywordColor() {
+        return 36;
+    }
+
+    /** 引号字符串高亮色（yellow 33）。 */
+    public static int stringColor() {
+        return 33;
+    }
+
+    /** 本地路径高亮色（purple，256 色 141）。 */
+    public static int pathColor() {
+        return 141;
+    }
+
     private static String wrap(String prefix, String text) {
         if (!ENABLED || text == null || text.isEmpty()) {
             return text;
         }
         return prefix + text + RESET;
+    }
+
+    public static int displayWidth(CharSequence text) {
+        return displayWidth(text == null ? "" : text.toString());
     }
 
     private static int displayWidth(String text) {

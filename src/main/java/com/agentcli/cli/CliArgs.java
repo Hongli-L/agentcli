@@ -16,9 +16,10 @@ final class CliArgs {
     final String prompt;
     final String provider;
     final String projectPath;
+    final boolean noColor;
 
     private CliArgs(boolean help, boolean version, boolean hitl, boolean lsp,
-                    String prompt, String provider, String projectPath) {
+                    String prompt, String provider, String projectPath, boolean noColor) {
         this.help = help;
         this.version = version;
         this.hitl = hitl;
@@ -26,6 +27,7 @@ final class CliArgs {
         this.prompt = prompt;
         this.provider = provider;
         this.projectPath = projectPath;
+        this.noColor = noColor;
     }
 
     static CliArgs parse(String[] args) {
@@ -36,6 +38,7 @@ final class CliArgs {
         String prompt = null;
         String provider = null;
         String projectPath = null;
+        boolean noColor = false;
 
         if (args != null) {
             for (int i = 0; i < args.length; i++) {
@@ -54,13 +57,15 @@ final class CliArgs {
                     provider = readValue(args, ++i, arg);
                 } else if ("--project".equals(arg) || "-C".equals(arg)) {
                     projectPath = readValue(args, ++i, arg);
+                } else if ("--no-color".equals(arg)) {
+                    noColor = true;
                 } else if (!arg.startsWith("-")) {
                     prompt = joinPromptTail(args, i);
                     break;
                 }
             }
         }
-        return new CliArgs(help, version, hitl, lsp, prompt, provider, projectPath);
+        return new CliArgs(help, version, hitl, lsp, prompt, provider, projectPath, noColor);
     }
 
     /** 把剩余参数拼成单次 prompt（用于 -p 后跟多个词的场景）。 */

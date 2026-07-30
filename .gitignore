@@ -12,6 +12,7 @@ _reference/
 
 # 编译输出
 target/
+build/
 *.class
 
 # IDE

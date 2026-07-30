@@ -1,5 +1,7 @@
 package com.agentcli.cli;
 
+import java.util.List;
+
 /**
  * 解析交互式会话中的斜杠命令。
  */
@@ -29,6 +31,18 @@ final class CliCommandParser {
         static ParsedCommand none() {
             return new ParsedCommand(CommandType.NONE, null);
         }
+    }
+
+    /** 补全用的规范命令目录（/mem 作为 /memory 前缀别名；含常用子命令）。 */
+    static List<String> commandNames() {
+        return List.of(
+                "/exit", "/quit", "/clear", "/help",
+                "/compact", "/hitl",
+                "/mcp", "/mcp logs", "/mcp status",
+                "/plan", "/model",
+                "/memory", "/memory list", "/memory clear", "/memory search", "/memory delete",
+                "/audit",
+                "/skill", "/lsp");
     }
 
     private CliCommandParser() {

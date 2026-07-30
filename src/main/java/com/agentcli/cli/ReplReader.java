@@ -2,6 +2,7 @@ package com.agentcli.cli;
 
 import com.agentcli.common.EnvLoader;
 import org.jline.reader.EndOfFileException;
+import org.jline.reader.History;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
@@ -15,24 +16,36 @@ import java.io.PrintStream;
 import java.nio.charset.Charset;
 
 /**
- * REPL 输入抽象：优先 JLine（支持方向键编辑），TTY 不可用时回退到 {@link BufferedReader}。
+ * REPL 输入抽象：优先 JLine（支持方向键编辑、补全、历史、高亮），TTY 不可用时回退到
+ * {@link BufferedReader}。
  */
 public interface ReplReader extends AutoCloseable {
 
     String readLine(String prompt) throws IOException;
 
+    /** 兼容旧调用：不注入任何增强能力（等价于 {@link #create(Charset, PrintStream, ReplEnhancements)} 传 null）。 */
     static ReplReader create(Charset charset, PrintStream out) throws IOException {
-        if (useJline()) {
+        return create(charset, out, null);
+    }
+
+    /**
+     * 工厂方法。仅当 TTY 可用（{@link #isJlineAvailable()} 为真）且 {@code enh} 非空时，
+     * 才构造具备补全 / 高亮 / 历史的 {@code JlineReplReader}；否则回退到
+     * {@link BufferedReplReader}（不补全、不高亮、不落盘）。
+     */
+    static ReplReader create(Charset charset, PrintStream out, ReplEnhancements enh) throws IOException {
+        if (isJlineAvailable()) {
             try {
-                return new JlineReplReader(charset);
+                return new JlineReplReader(charset, enh);
             } catch (Exception ignored) {
-                // 回退到基础 readLine
+                // 构造失败则回退到基础 readLine
             }
         }
         return new BufferedReplReader(charset, out);
     }
 
-    private static boolean useJline() {
+    /** TTY 总门控：仅当存在系统控制台且未强制纯文本 REPL 时为真。 */
+    static boolean isJlineAvailable() {
         if (System.console() == null) {
             return false;
         }
@@ -48,13 +61,29 @@ public interface ReplReader extends AutoCloseable {
         private final LineReader lineReader;
 
         JlineReplReader(Charset charset) throws IOException {
+            this(charset, null);
+        }
+
+        JlineReplReader(Charset charset, ReplEnhancements enh) throws IOException {
             this.terminal = TerminalBuilder.builder()
                     .system(true)
                     .encoding(charset)
                     .build();
-            this.lineReader = LineReaderBuilder.builder()
-                    .terminal(terminal)
-                    .build();
+            LineReaderBuilder builder = LineReaderBuilder.builder()
+                    .terminal(terminal);
+            if (enh != null && enh.completer != null) {
+                builder.completer(enh.completer);
+            }
+            if (enh != null && enh.highlighter != null) {
+                builder.highlighter(enh.highlighter);
+            }
+            LineReader lr = builder.build();
+            if (enh != null && enh.history != null) {
+                lr.setVariable(LineReader.HISTORY_FILE, ReplHistory.DEFAULT_PATH.toString());
+                lr.setVariable(LineReader.HISTORY_SIZE, 2000);
+                enh.history.attach(lr);
+            }
+            this.lineReader = lr;
         }
 
         @Override
@@ -71,6 +100,14 @@ public interface ReplReader extends AutoCloseable {
 
         @Override
         public void close() throws IOException {
+            History history = lineReader.getHistory();
+            if (history != null) {
+                try {
+                    history.save();
+                } catch (Exception ignored) {
+                    // 刷盘失败不阻塞退出
+                }
+            }
             terminal.close();
         }
     }

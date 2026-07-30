@@ -2,6 +2,7 @@ package com.agentcli.llm;
 
 import com.agentcli.common.AppConfig;
 
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -49,6 +50,11 @@ public final class LlmClientFactory {
             }
         }
         return null;
+    }
+
+    /** 已知 provider 名列表（供 /model 值补全使用，未来扩展只需改这里）。 */
+    public static List<String> knownProviders() {
+        return List.of("glm", "deepseek", "openai");
     }
 
     private static String normalizeProvider(String provider) {

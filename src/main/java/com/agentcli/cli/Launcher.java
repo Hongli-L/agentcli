@@ -8,6 +8,10 @@ import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.common.AnsiStyle;
+import com.agentcli.common.AgentCliHighlighter;
+import com.agentcli.skill.Skill;
+import com.agentcli.mcp.McpServer;
 import com.agentcli.lsp.LspContextInjector;
 import com.agentcli.lsp.LspDiagnosticsFormatter;
 import com.agentcli.lsp.LspLanguageDetector;
@@ -133,7 +137,21 @@ public final class Launcher {
         PrintStream consoleOut = out == System.out
                 ? new PrintStream(System.out, true, consoleCharset)
                 : out;
-        ReplReader input = ReplReader.create(consoleCharset, consoleOut);
+
+        // 唯一接线点：仅 TTY 可用时组装 REPL 增强能力（补全 / 高亮 / 历史），
+        // 非 TTY 传 null → BufferedReplReader，零副作用、不落盘。
+        ReplEnhancements enh = null;
+        if (ReplReader.isJlineAvailable()) {
+            boolean colorEnabled = AnsiStyle.isEnabled() && !cli.noColor;
+            ReplCompleter completer = new ReplCompleter(
+                    LlmClientFactory::knownProviders,
+                    () -> skillRegistry.allSkills().stream().map(Skill::name).toList(),
+                    () -> mcpManager.servers().stream().map(McpServer::name).toList());
+            AgentCliHighlighter highlighter = colorEnabled ? new AgentCliHighlighter(true) : null;
+            ReplHistory history = new ReplHistory();
+            enh = new ReplEnhancements(completer, highlighter, history);
+        }
+        ReplReader input = ReplReader.create(consoleCharset, consoleOut, enh);
         session.run(input, consoleOut);
     }
 
