@@ -24,7 +24,9 @@ final class CliCommandParser {
         MEMORY_DELETE,
         AUDIT,
         SKILL,
-        LSP
+        LSP,
+        STATUS,
+        USAGE
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -42,7 +44,8 @@ final class CliCommandParser {
                 "/plan", "/model",
                 "/memory", "/memory list", "/memory clear", "/memory search", "/memory delete",
                 "/audit",
-                "/skill", "/lsp");
+                "/skill", "/lsp",
+                "/status", "/usage");
     }
 
     private CliCommandParser() {
@@ -69,6 +72,12 @@ final class CliCommandParser {
         }
         if (trimmed.equalsIgnoreCase("/compact")) {
             return new ParsedCommand(CommandType.COMPACT, null);
+        }
+        if (trimmed.equalsIgnoreCase("/status")) {
+            return new ParsedCommand(CommandType.STATUS, null);
+        }
+        if (trimmed.equalsIgnoreCase("/usage")) {
+            return new ParsedCommand(CommandType.USAGE, null);
         }
         if (trimmed.equalsIgnoreCase("/hitl")) {
             return new ParsedCommand(CommandType.HITL, null);

@@ -89,6 +89,16 @@ public class TokenBudget {
         return totalOutputTokens;
     }
 
+    /** 会话内累计的缓存命中输入 token（计费单价低于普通输入）。 */
+    public int getTotalCachedInputTokens() {
+        return totalCachedInputTokens;
+    }
+
+    /** 会话内累计的 LLM 调用次数。 */
+    public int getLlmCallCount() {
+        return llmCallCount;
+    }
+
     public static int estimateMessagesTokens(List<LlmClient.Message> messages) {
         if (messages == null) {
             return 0;

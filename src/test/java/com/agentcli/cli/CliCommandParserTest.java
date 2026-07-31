@@ -46,6 +46,33 @@ class CliCommandParserTest {
     }
 
     @Test
+    void statusAndUsageCommands() {
+        assertEquals(CliCommandParser.CommandType.STATUS, CliCommandParser.parse("/status").type());
+        assertEquals(CliCommandParser.CommandType.USAGE, CliCommandParser.parse("/usage").type());
+    }
+
+    @Test
+    void statusAndUsageAreCaseInsensitiveAndTrimmed() {
+        assertEquals(CliCommandParser.CommandType.STATUS, CliCommandParser.parse("/STATUS").type());
+        assertEquals(CliCommandParser.CommandType.STATUS, CliCommandParser.parse("  /Status  ").type());
+        assertEquals(CliCommandParser.CommandType.USAGE, CliCommandParser.parse("/UsAgE").type());
+        assertNull(CliCommandParser.parse("/status").payload());
+    }
+
+    @Test
+    void statusAndUsageAreOfferedInCompletion() {
+        assertTrue(CliCommandParser.commandNames().contains("/status"));
+        assertTrue(CliCommandParser.commandNames().contains("/usage"));
+    }
+
+    @Test
+    void bareStatusWordIsNotACommand() {
+        // 只认斜杠形式，避免把用户的自然语言 "status" 吞掉
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("status").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("usage").type());
+    }
+
+    @Test
     void plainTextIsNotCommand() {
         assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("explain this code").type());
     }

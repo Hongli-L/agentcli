@@ -2,6 +2,7 @@ package com.agentcli.agent;
 
 import com.agentcli.llm.LlmClient;
 import com.agentcli.common.UserFacingErrors;
+import com.agentcli.context.ContextProfile;
 import com.agentcli.memory.ConversationHistoryCompactor;
 import com.agentcli.skill.SkillIndexFormatter;
 import com.agentcli.skill.SkillRegistry;
@@ -190,7 +191,9 @@ public class ReActAgent {
     }
 
     private String buildSystemPrompt(String memoryContext) {
-        StringBuilder prompt = new StringBuilder(SystemPrompt.forAgent(toolRegistry, memoryContext));
+        // 只为模板变量（tool_count/model_name）采集画像；token 等高频字段不会进入系统提示，避免击穿 prompt cache。
+        ContextProfile profile = ContextProfile.capture(llmClient, toolRegistry, null, memoryManager);
+        StringBuilder prompt = new StringBuilder(SystemPrompt.forAgent(toolRegistry, memoryContext, profile));
         if (skillRegistry != null) {
             String index = SkillIndexFormatter.format(skillRegistry.enabledSkills());
             if (!index.isBlank()) {

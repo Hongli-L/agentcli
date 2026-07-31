@@ -5,6 +5,8 @@ import com.agentcli.audit.AuditLog;
 import com.agentcli.audit.AuditLlmClient;
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.AppConfig;
+import com.agentcli.context.ContextProfile;
+import com.agentcli.context.TokenUsageFormatter;
 import com.agentcli.hitl.HitlHandler;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.llm.LlmClient;
@@ -213,8 +215,45 @@ public class InteractiveSession {
                 handleLsp(command.payload(), out);
                 yield true;
             }
+            case STATUS -> {
+                handleStatus(out);
+                yield true;
+            }
+            case USAGE -> {
+                handleUsage(out);
+                yield true;
+            }
             case NONE -> false;
         };
+    }
+
+    /** {@code /status}：打印当前会话的上下文画像。 */
+    private void handleStatus(PrintStream out) {
+        ContextProfile profile = captureProfile(out);
+        if (profile != null) {
+            out.println(profile.render());
+        }
+    }
+
+    /** {@code /usage}：打印累计 token 用量与费用估算。 */
+    private void handleUsage(PrintStream out) {
+        ContextProfile profile = captureProfile(out);
+        if (profile != null) {
+            out.println(TokenUsageFormatter.format(profile));
+        }
+    }
+
+    /**
+     * 采集上下文画像。任何异常都转成一行友好提示，
+     * 状态类命令不该因为某个数据源抽风就把堆栈糊到用户脸上。
+     */
+    private ContextProfile captureProfile(PrintStream out) {
+        try {
+            return ContextProfile.capture(llmClient, agent.getToolRegistry(), mcpManager, agent.getMemoryManager());
+        } catch (RuntimeException e) {
+            out.println("无法采集会话状态: " + e.getMessage());
+            return null;
+        }
     }
 
     private void printMemoryList(PrintStream out) {
@@ -466,6 +505,8 @@ public class InteractiveSession {
         out.println("  /memory search Q    搜索长期记忆");
         out.println("  /memory delete ID   删除指定记忆");
         out.println("  /memory clear       清空长期记忆");
+        out.println("  /status             查看会话上下文画像（模型/工具/记忆/token）");
+        out.println("  /usage              查看累计 token 用量与费用估算");
         out.println("  /compact            手动压缩对话历史");
         out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
         out.println("  /plan <目标>         先规划再分步执行复杂任务");

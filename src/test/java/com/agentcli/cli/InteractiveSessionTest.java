@@ -81,6 +81,40 @@ class InteractiveSessionTest {
     }
 
     @Test
+    void statusCommandPrintsContextProfile() {
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        assertTrue(session.handleCommand(CliCommandParser.parse("/status"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("会话状态"), text);
+        assertTrue(text.contains("stub"), text);
+    }
+
+    @Test
+    void usageCommandPrintsTokenReport() {
+        llm.enqueue(new LlmClient.ChatResponse("assistant", "ok", null, List.of(), 120, 30));
+        session.runTurn("hi", new PrintStream(output, true, StandardCharsets.UTF_8));
+        output.reset();
+
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        assertTrue(session.handleCommand(CliCommandParser.parse("/usage"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Token 用量"), text);
+        assertTrue(text.contains("估算"), text);
+    }
+
+    @Test
+    void sessionHelpMentionsStatusAndUsage() {
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        InteractiveSession.printSessionHelp(out);
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("/status"), text);
+        assertTrue(text.contains("/usage"), text);
+    }
+
+    @Test
     void replExitsOnExitCommand() throws Exception {
         PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
         ReplReader input = new ReplReader.BufferedReplReader(
