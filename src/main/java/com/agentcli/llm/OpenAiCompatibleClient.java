@@ -57,6 +57,15 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
     protected void customizeRequest(Request.Builder request) {
     }
 
+    /**
+     * SSE 分片级钩子：在通用 {@code error} 节点检查之后、usage 解析之前调用。
+     *
+     * <p>供在 HTTP 200 响应体内用业务码表达错误的厂商（如讯飞的 {@code code} 字段）覆写，
+     * 默认不做任何事。抛出 {@link IOException} 即可中断本次流式解析。
+     */
+    protected void inspectStreamChunk(JsonNode root) throws IOException {
+    }
+
     @Override
     public ChatResponse chat(List<Message> messages, List<Tool> tools) throws IOException {
         return chat(messages, tools, StreamListener.NO_OP);
@@ -121,6 +130,8 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
             if (!error.isMissingNode() && !error.isNull()) {
                 throw new IOException("API 请求失败: " + formatStreamingError(error));
             }
+
+            inspectStreamChunk(root);
 
             JsonNode usage = root.path("usage");
             if (!usage.isMissingNode()) {
@@ -231,20 +242,55 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
         return message.isEmpty() ? error.toString() : message;
     }
 
+    /**
+     * 提取一段 reasoning 增量。
+     *
+     * <p>兼容三种厂商方言：{@code reasoning_content}（DeepSeek / Kimi / Step 系）、
+     * {@code reasoning}（部分聚合网关）、{@code reasoning_details} 数组（OpenRouter 风格，
+     * 逐项取 {@code text}，缺失时回退 {@code content}，按序拼接）。
+     */
     private String extractReasoningDelta(JsonNode delta) {
         String reasoningContent = delta.path("reasoning_content").asText("");
         if (!reasoningContent.isEmpty()) {
             return reasoningContent;
         }
-        return delta.path("reasoning").asText("");
+        String reasoning = delta.path("reasoning").asText("");
+        if (!reasoning.isEmpty()) {
+            return reasoning;
+        }
+        JsonNode details = delta.path("reasoning_details");
+        if (!details.isArray() || details.isEmpty()) {
+            return "";
+        }
+        StringBuilder merged = new StringBuilder();
+        for (JsonNode detail : details) {
+            String text = detail.path("text").asText("");
+            if (text.isEmpty()) {
+                text = detail.path("content").asText("");
+            }
+            merged.append(text);
+        }
+        return merged.toString();
     }
 
+    /**
+     * 解析缓存命中的输入 token 数。
+     *
+     * <p>各厂商字段名不统一，按「后写覆盖先写」的顺序依次尝试：
+     * {@code cached_tokens} / {@code prompt_cache_hit_tokens} / {@code prompt_tokens_details.cached_tokens}
+     * / {@code input_cache_hit_tokens} / {@code input_tokens_details.cached_tokens}。
+     */
     private int parseCachedInputTokens(JsonNode usage, int fallback) {
         int cached = usage.path("cached_tokens").asInt(fallback);
         cached = usage.path("prompt_cache_hit_tokens").asInt(cached);
         JsonNode promptDetails = usage.path("prompt_tokens_details");
         if (!promptDetails.isMissingNode()) {
             cached = promptDetails.path("cached_tokens").asInt(cached);
+        }
+        cached = usage.path("input_cache_hit_tokens").asInt(cached);
+        JsonNode inputDetails = usage.path("input_tokens_details");
+        if (!inputDetails.isMissingNode()) {
+            cached = inputDetails.path("cached_tokens").asInt(cached);
         }
         return cached;
     }

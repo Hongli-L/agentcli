@@ -94,6 +94,70 @@ class LlmClientFactoryTest {
     }
 
     @Test
+    void createsXfyunClientFromAliases() {
+        AppConfig config = configWith("xfyun", "test-key", "4.0Ultra", null);
+
+        XfyunCompatibleClient xfyun = assertInstanceOf(
+                XfyunCompatibleClient.class, LlmClientFactory.create("xfyun", config));
+        assertEquals("xfyun", xfyun.getProviderName());
+        assertEquals("4.0Ultra", xfyun.getModelName());
+        assertEquals("https://spark-api-open.xf-yun.com/v1/chat/completions", xfyun.getApiUrl());
+
+        // 大小写 / 首尾空格 / 英文别名 / 中文别名 均应归一到 xfyun
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("XFYUN", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create(" Xunfei ", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("IFLYTEK", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("spark", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("xinghuo", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("xfyun-maas", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("maas", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create(" 讯飞 ", config));
+        assertInstanceOf(XfyunCompatibleClient.class, LlmClientFactory.create("星火", config));
+    }
+
+    @Test
+    void createsXfyunClientWithLoraIdAndMaasBaseUrl() {
+        AppConfig config = new AppConfig();
+        AppConfig.ProviderConfig pc = new AppConfig.ProviderConfig();
+        pc.setApiKey("test-key");
+        pc.setModel("Qwen3.6-35B-A3B");
+        pc.setBaseUrl("https://maas-api.cn-huabei-1.xf-yun.com/v2");
+        pc.setLoraId("lora-abc");
+        config.getProviders().put("xfyun", pc);
+
+        XfyunCompatibleClient xfyun = assertInstanceOf(
+                XfyunCompatibleClient.class, LlmClientFactory.create("讯飞", config));
+        assertEquals("lora-abc", xfyun.loraId(), "工厂应把 loraId 透传给客户端");
+        assertEquals(XfyunCompatibleClient.Flavor.MAAS, xfyun.flavor());
+        assertEquals("https://maas-api.cn-huabei-1.xf-yun.com/v2/chat/completions", xfyun.getApiUrl());
+    }
+
+    @Test
+    void createsAgnesClientFromAliases() {
+        AppConfig config = configWith("agnes", "test-key", null, null);
+
+        AgnesClient agnes = assertInstanceOf(AgnesClient.class, LlmClientFactory.create("agnes", config));
+        assertEquals("agnes", agnes.getProviderName());
+        assertEquals("agnes-2.5-flash", agnes.getModelName());
+        assertEquals(1_000_000, agnes.maxContextWindow());
+
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("AGNES", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create(" Agnes-AI ", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("agnes_ai", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("agnesai", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("SAPIENS", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("sapiens-ai", config));
+        assertInstanceOf(AgnesClient.class, LlmClientFactory.create("apihub", config));
+    }
+
+    @Test
+    void knownProvidersIncludesXfyunAndAgnes() {
+        assertEquals(
+                java.util.List.of("glm", "deepseek", "kimi", "step", "xfyun", "agnes", "openai"),
+                LlmClientFactory.knownProviders());
+    }
+
+    @Test
     void returnsNullForUnknownProvider() {
         AppConfig config = configWith("zzz-unknown", "test-key", "x", null);
         assertNull(LlmClientFactory.create("zzz-unknown", config));

@@ -33,6 +33,16 @@ public interface LlmClient {
         return true;
     }
 
+    /** 该 provider 是否具备提示词缓存（prompt cache）能力。纯元数据，仅用于展示与成本口径。 */
+    default boolean supportsPromptCaching() {
+        return false;
+    }
+
+    /** 提示词缓存模式标识，取值见 {@link PromptCacheMode}。 */
+    default String promptCacheMode() {
+        return PromptCacheMode.NONE;
+    }
+
     /** 对话消息。text-only：仅承载文本内容与工具调用协议字段。 */
     record Message(String role, String content, String reasoningContent,
                    List<ToolCall> toolCalls, String toolCallId) {

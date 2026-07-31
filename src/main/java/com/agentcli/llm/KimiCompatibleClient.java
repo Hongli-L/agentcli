@@ -71,4 +71,14 @@ public class KimiCompatibleClient extends OpenAiCompatibleClient {
     public int maxContextWindow() {
         return 256_000;
     }
+
+    @Override
+    public boolean supportsPromptCaching() {
+        return true;
+    }
+
+    @Override
+    public String promptCacheMode() {
+        return PromptCacheMode.MOONSHOT;
+    }
 }

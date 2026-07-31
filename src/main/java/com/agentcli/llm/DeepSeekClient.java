@@ -75,4 +75,14 @@ public class DeepSeekClient extends OpenAiCompatibleClient {
     public int maxContextWindow() {
         return 65_536;
     }
+
+    @Override
+    public boolean supportsPromptCaching() {
+        return true;
+    }
+
+    @Override
+    public String promptCacheMode() {
+        return PromptCacheMode.DEEPSEEK;
+    }
 }

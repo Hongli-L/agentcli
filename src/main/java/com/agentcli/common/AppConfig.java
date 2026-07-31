@@ -35,6 +35,7 @@ public class AppConfig {
         private String apiKey;
         private String baseUrl;
         private String model;
+        private String loraId;
 
         public ProviderConfig() {
         }
@@ -61,6 +62,15 @@ public class AppConfig {
 
         public void setModel(String model) {
             this.model = model;
+        }
+
+        /** 微调模型标识（当前用于讯飞 MaaS 的 {@code lora_id} 请求头），未使用时为 {@code null}。 */
+        public String getLoraId() {
+            return loraId;
+        }
+
+        public void setLoraId(String loraId) {
+            this.loraId = loraId;
         }
     }
 
@@ -102,6 +112,15 @@ public class AppConfig {
             return config.getBaseUrl();
         }
         return EnvLoader.get(envKey(provider, "BASE_URL"));
+    }
+
+    /** 微调模型标识（如讯飞 MaaS 的 lora_id），回退到 {@code <PROVIDER>_LORA_ID} 环境变量。 */
+    public String getLoraId(String provider) {
+        ProviderConfig config = providers.get(provider);
+        if (config != null && isPresent(config.getLoraId())) {
+            return config.getLoraId();
+        }
+        return EnvLoader.get(envKey(provider, "LORA_ID"));
     }
 
     public static AppConfig load() {

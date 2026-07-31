@@ -1,6 +1,7 @@
 package com.agentcli.testsupport;
 
 import com.agentcli.llm.LlmClient;
+import com.agentcli.llm.PromptCacheMode;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -13,10 +14,21 @@ public final class StubLlmClient implements LlmClient {
     private final String providerName;
     private final List<Object> scripted = new ArrayList<>();
     private int chatCalls;
+    private boolean promptCachingSupported;
+    private String promptCacheMode = PromptCacheMode.NONE;
 
     public StubLlmClient(String modelName, String providerName) {
         this.modelName = modelName;
         this.providerName = providerName;
+    }
+
+    /**
+     * 配置提示词缓存元数据。不调用时与 {@link LlmClient} 的接口默认值一致
+     * （不支持 / {@link PromptCacheMode#NONE}），因此既有用例行为不变。
+     */
+    public void configurePromptCache(boolean supported, String mode) {
+        this.promptCachingSupported = supported;
+        this.promptCacheMode = mode == null || mode.isBlank() ? PromptCacheMode.NONE : mode;
     }
 
     public void enqueue(LlmClient.ChatResponse response) {
@@ -65,5 +77,15 @@ public final class StubLlmClient implements LlmClient {
     @Override
     public String getProviderName() {
         return providerName;
+    }
+
+    @Override
+    public boolean supportsPromptCaching() {
+        return promptCachingSupported;
+    }
+
+    @Override
+    public String promptCacheMode() {
+        return promptCacheMode;
     }
 }

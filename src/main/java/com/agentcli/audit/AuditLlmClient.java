@@ -68,6 +68,16 @@ public class AuditLlmClient implements LlmClient {
         return delegate.supportsTools();
     }
 
+    @Override
+    public boolean supportsPromptCaching() {
+        return delegate.supportsPromptCaching();
+    }
+
+    @Override
+    public String promptCacheMode() {
+        return delegate.promptCacheMode();
+    }
+
     @FunctionalInterface
     private interface IOExceptionSupplier<T> {
         T get() throws IOException;

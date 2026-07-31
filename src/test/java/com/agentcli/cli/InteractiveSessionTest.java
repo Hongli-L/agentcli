@@ -91,6 +91,33 @@ class InteractiveSessionTest {
     }
 
     @Test
+    void statusCommandShowsPromptCacheModeWhenSupported() {
+        // v0.17.0：/status 消费 LlmClient.promptCacheMode()，避免元数据成为无消费方的死 API
+        llm.configurePromptCache(true, "moonshot-context-cache");
+
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        assertTrue(session.handleCommand(CliCommandParser.parse("/status"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("提示词缓存"), text);
+        assertTrue(text.contains("moonshot-context-cache"), text);
+        // 既有画像仍完整输出，缓存行是追加而非替换
+        assertTrue(text.contains("会话状态"), text);
+    }
+
+    @Test
+    void statusCommandShowsFriendlyTextWhenPromptCacheUnavailable() {
+        // 默认 stub 走 LlmClient 接口默认值（不支持 / none）
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        assertTrue(session.handleCommand(CliCommandParser.parse("/status"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("提示词缓存"), text);
+        assertTrue(text.contains("无（该 provider 未启用）"), text);
+        assertTrue(!text.contains("none"), "none 应渲染为中文友好文案而非原样透出: " + text);
+    }
+
+    @Test
     void usageCommandPrintsTokenReport() {
         llm.enqueue(new LlmClient.ChatResponse("assistant", "ok", null, List.of(), 120, 30));
         session.runTurn("hi", new PrintStream(output, true, StandardCharsets.UTF_8));

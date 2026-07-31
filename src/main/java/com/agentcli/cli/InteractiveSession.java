@@ -11,6 +11,7 @@ import com.agentcli.hitl.HitlHandler;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
+import com.agentcli.llm.PromptCacheMode;
 import com.agentcli.mcp.McpServerManager;
 import com.agentcli.mcp.mention.MentionResolver;
 import com.agentcli.memory.MemoryEntry;
@@ -227,12 +228,43 @@ public class InteractiveSession {
         };
     }
 
-    /** {@code /status}：打印当前会话的上下文画像。 */
+    /** {@code /status}：打印当前会话的上下文画像，并追加当前 provider 的提示词缓存模式。 */
     private void handleStatus(PrintStream out) {
         ContextProfile profile = captureProfile(out);
         if (profile != null) {
             out.println(profile.render());
+            out.println(renderPromptCacheLine());
         }
+    }
+
+    /**
+     * 渲染提示词缓存一行，列宽与 {@link ContextProfile#render()} 的标签列（10 显示宽度）对齐。
+     *
+     * <p>{@code 提示词缓存} 恰为 5 个全角字符（显示宽度 10），故无需补空格。
+     */
+    private String renderPromptCacheLine() {
+        return AnsiStyle.subtle("  提示词缓存: ") + describePromptCache();
+    }
+
+    /**
+     * 描述当前 provider 的提示词缓存能力。
+     *
+     * <p>与 {@link #captureProfile} 同样按「状态类命令不许抛异常」处理：客户端缺失或
+     * 元数据取值抛错时降级为友好文案，而不是把堆栈糊到用户脸上。
+     */
+    private String describePromptCache() {
+        boolean supported;
+        String mode;
+        try {
+            supported = llmClient != null && llmClient.supportsPromptCaching();
+            mode = llmClient == null ? null : llmClient.promptCacheMode();
+        } catch (RuntimeException e) {
+            return "未知";
+        }
+        if (!supported || mode == null || mode.isBlank() || PromptCacheMode.NONE.equals(mode)) {
+            return "无（该 provider 未启用）";
+        }
+        return AnsiStyle.emphasis(mode);
     }
 
     /** {@code /usage}：打印累计 token 用量与费用估算。 */

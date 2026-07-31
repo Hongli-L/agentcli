@@ -55,4 +55,14 @@ public class GlmClient extends OpenAiCompatibleClient {
     public int maxContextWindow() {
         return 128_000;
     }
+
+    @Override
+    public boolean supportsPromptCaching() {
+        return true;
+    }
+
+    @Override
+    public String promptCacheMode() {
+        return PromptCacheMode.GLM;
+    }
 }
