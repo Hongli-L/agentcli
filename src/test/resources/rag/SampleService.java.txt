@@ -1,0 +1,53 @@
+package com.example.demo;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 示例服务，专门用来验证正则解析层。
+ * 这段 Javadoc 里写了 class Ghost extends Phantom implements Invisible，
+ * 掩码之后不应该被识别成任何类型声明或继承关系。
+ */
+public class SampleService extends BaseService implements ServiceInterface {
+
+    // 行注释里的 class Shadow extends Darkness 同样不能被识别
+    private final MemoryManager memoryManager;
+    private String lastQuery = "default}value";
+
+    public SampleService(MemoryManager memoryManager) {
+        this.memoryManager = memoryManager;
+    }
+
+    @Override
+    public List<String> recall(String query) {
+        lastQuery = query;
+        List<String> hits = new ArrayList<>();
+        hits.addAll(memoryManager.recall(query));
+        memoryManager.recall(query);
+        System.out.println("这个字符串里有一个右花括号 } 用来验证掩码");
+        return hits;
+    }
+
+    public void remember(String text) {
+        memoryManager.remember(text);
+    }
+
+    private String describe() {
+        String template = """
+                文本块里也写 class Fake extends Nothing 和一个 } 花括号，
+                同样必须被掩码掉。
+                """;
+        return template + lastQuery;
+    }
+
+    /** 嵌套接口，用于验证 interface 类型块。 */
+    interface Callback {
+        void onDone(String message);
+    }
+
+    /** 嵌套枚举，用于验证 enum 类型块。 */
+    enum Status {
+        READY,
+        BUSY
+    }
+}

@@ -4,6 +4,12 @@ import com.agentcli.agent.ReActAgent;
 import com.agentcli.testsupport.StubLlmClient;
 import com.agentcli.common.AppConfig;
 import com.agentcli.llm.LlmClient;
+import com.agentcli.rag.CodeIndex;
+import com.agentcli.rag.CodeRetriever;
+import com.agentcli.rag.EmbeddingClient;
+import com.agentcli.rag.RagCommandHandler;
+import com.agentcli.rag.VectorStore;
+import com.agentcli.store.SqliteStore;
 import com.agentcli.tool.ToolRegistry;
 import com.agentcli.skill.SkillRegistry;
 import com.agentcli.skill.SkillStateStore;
@@ -195,6 +201,113 @@ class InteractiveSessionTest {
         PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
         session.handleCommand(CliCommandParser.parse("/skill"), out);
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("未初始化"));
+    }
+
+    // ---------------------------------------------------------------- v0.18.0 RAG 三命令派发
+
+    @Test
+    void ragCommandsAreDispatchedToHandlerAndPrinted(@TempDir Path ragRoot) throws Exception {
+        List<String> calls = new java.util.ArrayList<>();
+        session.setRagCommandHandler(recordingHandler(ragRoot, calls));
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        assertTrue(session.handleCommand(CliCommandParser.parse("/index"), out));
+        assertTrue(session.handleCommand(CliCommandParser.parse("/search 用户登录"), out));
+        assertTrue(session.handleCommand(CliCommandParser.parse("/graph ReactAgent"), out));
+
+        assertEquals(List.of("index:null", "search:用户登录", "graph:ReactAgent"), calls);
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("[index-done]"), text);
+        assertTrue(text.contains("[search-done]"), text);
+        assertTrue(text.contains("[graph-done]"), text);
+    }
+
+    @Test
+    void indexProgressIsStreamedToConsole(@TempDir Path ragRoot) throws Exception {
+        session.setRagCommandHandler(recordingHandler(ragRoot, new java.util.ArrayList<>()));
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        session.handleCommand(CliCommandParser.parse("/index"), out);
+
+        // 索引耗时长，进度必须实时可见而不是攒到最后一次性吐出
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("[progress]"), text);
+        assertTrue(text.indexOf("[progress]") < text.indexOf("[index-done]"), text);
+    }
+
+    @Test
+    void searchWithoutArgumentPrintsUsageHint(@TempDir Path ragRoot) throws Exception {
+        session.setRagCommandHandler(realHandler(ragRoot));
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        assertTrue(session.handleCommand(CliCommandParser.parse("/search"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("请提供检索关键词"), text);
+    }
+
+    @Test
+    void graphWithoutArgumentPrintsUsageHint(@TempDir Path ragRoot) throws Exception {
+        session.setRagCommandHandler(realHandler(ragRoot));
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        assertTrue(session.handleCommand(CliCommandParser.parse("/graph"), out));
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("请提供类名"), text);
+    }
+
+    @Test
+    void sessionHelpMentionsRagCommands() {
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        InteractiveSession.printSessionHelp(out);
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("/index"), text);
+        assertTrue(text.contains("/search"), text);
+        assertTrue(text.contains("/graph"), text);
+    }
+
+    /** 记录派发参数的门面桩：三个方法全部覆写，底层依赖不会被触碰。 */
+    private RagCommandHandler recordingHandler(Path root, List<String> calls) throws Exception {
+        return new RagCommandHandler(newCodeIndex(root), newRetriever(root), root) {
+            @Override
+            public String handleIndex(String payload, CodeIndex.ProgressListener listener) {
+                calls.add("index:" + payload);
+                listener.onProgress("[progress] 开始索引");
+                return "[index-done]";
+            }
+
+            @Override
+            public String handleSearch(String payload) {
+                calls.add("search:" + payload);
+                return "[search-done]";
+            }
+
+            @Override
+            public String handleGraph(String payload) {
+                calls.add("graph:" + payload);
+                return "[graph-done]";
+            }
+        };
+    }
+
+    /** 未打桩的真实门面，用于验证空参数用法提示确实由门面产出。 */
+    private RagCommandHandler realHandler(Path root) throws Exception {
+        return new RagCommandHandler(newCodeIndex(root), newRetriever(root), root);
+    }
+
+    private CodeIndex newCodeIndex(Path root) throws Exception {
+        return new CodeIndex(newVectorStore(root), EmbeddingClient.disabled("测试未配置 embedding"));
+    }
+
+    private CodeRetriever newRetriever(Path root) throws Exception {
+        return new CodeRetriever(newVectorStore(root),
+                EmbeddingClient.disabled("测试未配置 embedding"), null);
+    }
+
+    private VectorStore newVectorStore(Path root) throws Exception {
+        return new VectorStore(SqliteStore.open(root.resolve("rag-session-test.db")));
     }
 
     private void writeSkill(Path root, String name, String description) throws Exception {

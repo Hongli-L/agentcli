@@ -25,6 +25,7 @@ import com.agentcli.lsp.LspCommandHandler;
 import com.agentcli.lsp.LspDiagnosticsFormatter;
 import com.agentcli.lsp.LspServerManager;
 import com.agentcli.lsp.config.LspConfig;
+import com.agentcli.rag.RagCommandHandler;
 import com.agentcli.store.SqliteStore;
 import com.agentcli.tool.ToolRegistry;
 
@@ -47,6 +48,8 @@ public class InteractiveSession {
     private LspServerManager lspManager;
     private LspCommandHandler lspHandler;
     private MentionResolver mentionResolver;
+    private RagCommandHandler ragHandler;
+    private boolean ragHandlerResolved;
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
         this(agent, llmClient, config, null, null, null);
@@ -73,6 +76,17 @@ public class InteractiveSession {
     /** v0.14.0：注入 @mention 解析器，供自然语言轮（NONE）解析自由文本。 */
     public void setMentionResolver(MentionResolver mentionResolver) {
         this.mentionResolver = mentionResolver;
+    }
+
+    /**
+     * v0.18.0：注入 RAG 命令门面。
+     *
+     * <p>生产环境无需调用——{@link #ragHandler(PrintStream)} 会在首次使用 {@code /index}
+     * {@code /search} {@code /graph} 时懒加载；本方法供测试替换为桩实现。
+     */
+    public void setRagCommandHandler(RagCommandHandler handler) {
+        this.ragHandler = handler;
+        this.ragHandlerResolved = true;
     }
 
     public void setLspManager(LspServerManager lspManager, LspConfig lspConfig) {
@@ -214,6 +228,18 @@ public class InteractiveSession {
             }
             case LSP -> {
                 handleLsp(command.payload(), out);
+                yield true;
+            }
+            case INDEX -> {
+                handleIndex(command.payload(), out);
+                yield true;
+            }
+            case SEARCH -> {
+                handleSearch(command.payload(), out);
+                yield true;
+            }
+            case GRAPH -> {
+                handleGraph(command.payload(), out);
                 yield true;
             }
             case STATUS -> {
@@ -432,6 +458,47 @@ public class InteractiveSession {
         out.println(lspHandler.handle(cmd));
     }
 
+    /** {@code /index}：进度回调直接接到 {@code out}，让长耗时索引过程实时可见。 */
+    private void handleIndex(String payload, PrintStream out) {
+        RagCommandHandler handler = ragHandler(out);
+        if (handler != null) {
+            out.println(handler.handleIndex(payload, out::println));
+        }
+    }
+
+    /** {@code /search}：语义 + 关键词混合检索。 */
+    private void handleSearch(String payload, PrintStream out) {
+        RagCommandHandler handler = ragHandler(out);
+        if (handler != null) {
+            out.println(handler.handleSearch(payload));
+        }
+    }
+
+    /** {@code /graph}：类关系图谱，不依赖 embedding。 */
+    private void handleGraph(String payload, PrintStream out) {
+        RagCommandHandler handler = ragHandler(out);
+        if (handler != null) {
+            out.println(handler.handleGraph(payload));
+        }
+    }
+
+    /**
+     * 懒加载 RAG 门面：只在首次使用三命令时才打开索引库，避免为没用过 RAG 的会话付出建库开销。
+     *
+     * <p>初始化失败只记一次并每次给出单行原因，不重试——失败原因（库文件损坏 / 无写权限）
+     * 通常在会话生命周期内不会自愈，反复重试只会拖慢每一次命令。
+     */
+    private RagCommandHandler ragHandler(PrintStream out) {
+        if (!ragHandlerResolved) {
+            ragHandlerResolved = true;
+            ragHandler = RagCommandHandler.create(config, agent.getToolRegistry().getProjectPath());
+        }
+        if (ragHandler == null) {
+            out.println("❌ RAG 索引不可用: " + RagCommandHandler.lastCreateFailure());
+        }
+        return ragHandler;
+    }
+
     private void handleMcp(String payload, PrintStream out) {
         if (mcpManager == null) {
             out.println("MCP 服务器管理器未初始化（使用 --mcp 参数启动）。");
@@ -550,6 +617,9 @@ public class InteractiveSession {
         out.println("  /skill on/off <name> 启用 / 禁用某个 skill");
         out.println("  /skill reload         重新扫描 skill 目录");
         out.println("  /lsp [start|stop|status|diagnostics|config]  LSP 诊断集成");
+        out.println("  /index [路径]        建立/重建代码语义索引与类关系图谱");
+        out.println("  /search <自然语言>   语义 + 关键词混合检索代码");
+        out.println("  /graph <类名>        查看类的继承/实现/包含/调用关系");
         out.println("  /exit, /quit       退出交互模式");
         out.println();
         out.println("启动参数:");

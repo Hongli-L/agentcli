@@ -27,8 +27,14 @@ public class AppConfig {
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.json");
     private static final ObjectMapper MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
+    /** embedding 未配置 baseUrl 时的默认端点（OpenAI 官方）。 */
+    private static final String DEFAULT_EMBEDDING_BASE_URL = "https://api.openai.com/v1";
+    /** embedding 未配置 model 时的默认模型（1536 维，性价比与召回均衡）。 */
+    private static final String DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+
     private String defaultProvider = "glm";
     private Map<String, ProviderConfig> providers = new LinkedHashMap<>();
+    private EmbeddingConfig embedding = new EmbeddingConfig();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ProviderConfig {
@@ -72,6 +78,86 @@ public class AppConfig {
         public void setLoraId(String loraId) {
             this.loraId = loraId;
         }
+    }
+
+    /**
+     * v0.18.0：RAG 代码索引使用的 embedding 配置段。
+     *
+     * <p>与 {@link ProviderConfig} 分开而不是塞进 {@code providers} map，是因为 embedding 与
+     * chat 是两类模型：用户完全可能 chat 走 GLM、embedding 走本地 Ollama，混在一起会让
+     * {@code /model} 的切换语义变得含混。
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class EmbeddingConfig {
+        private String apiKey;
+        private String baseUrl;
+        private String model;
+
+        public EmbeddingConfig() {
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+    }
+
+    public EmbeddingConfig getEmbedding() {
+        return embedding;
+    }
+
+    public void setEmbedding(EmbeddingConfig embedding) {
+        this.embedding = embedding == null ? new EmbeddingConfig() : embedding;
+    }
+
+    /**
+     * embedding API Key，回退到 {@code EMBEDDING_API_KEY} 环境变量。
+     *
+     * <p>刻意<b>不造默认值</b>：缺 key 时返回 {@code null}，由上层判定为「不可用」并降级到
+     * 关键词检索，而不是拿一个假 key 去打必然失败的请求。
+     */
+    public String getEmbeddingApiKey() {
+        if (embedding != null && isPresent(embedding.getApiKey())) {
+            return embedding.getApiKey();
+        }
+        return EnvLoader.get("EMBEDDING_API_KEY");
+    }
+
+    /** embedding 端点，回退顺序：配置 → {@code EMBEDDING_BASE_URL} → OpenAI 官方端点。 */
+    public String getEmbeddingBaseUrl() {
+        if (embedding != null && isPresent(embedding.getBaseUrl())) {
+            return embedding.getBaseUrl();
+        }
+        String fromEnv = EnvLoader.get("EMBEDDING_BASE_URL");
+        return isPresent(fromEnv) ? fromEnv : DEFAULT_EMBEDDING_BASE_URL;
+    }
+
+    /** embedding 模型名，回退顺序：配置 → {@code EMBEDDING_MODEL} → {@code text-embedding-3-small}。 */
+    public String getEmbeddingModel() {
+        if (embedding != null && isPresent(embedding.getModel())) {
+            return embedding.getModel();
+        }
+        String fromEnv = EnvLoader.get("EMBEDDING_MODEL");
+        return isPresent(fromEnv) ? fromEnv : DEFAULT_EMBEDDING_MODEL;
     }
 
     public String getDefaultProvider() {

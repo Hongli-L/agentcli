@@ -76,4 +76,59 @@ class CliCommandParserTest {
     void plainTextIsNotCommand() {
         assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("explain this code").type());
     }
+
+    // ---------------------------------------------------------------- v0.18.0 RAG 三命令
+
+    @Test
+    void ragCommandsParseTypeAndPayload() {
+        var index = CliCommandParser.parse("/index");
+        assertEquals(CliCommandParser.CommandType.INDEX, index.type());
+        assertNull(index.payload());
+
+        var indexWithPath = CliCommandParser.parse("/index /tmp/x");
+        assertEquals(CliCommandParser.CommandType.INDEX, indexWithPath.type());
+        assertEquals("/tmp/x", indexWithPath.payload());
+
+        var search = CliCommandParser.parse("/search 用户登录");
+        assertEquals(CliCommandParser.CommandType.SEARCH, search.type());
+        assertEquals("用户登录", search.payload());
+
+        var graph = CliCommandParser.parse("/graph ReactAgent");
+        assertEquals(CliCommandParser.CommandType.GRAPH, graph.type());
+        assertEquals("ReactAgent", graph.payload());
+    }
+
+    @Test
+    void ragCommandsWithoutArgumentsStillReturnTheirType() {
+        // 无参也必须被识别为命令，否则 "/search" 会掉进自然语言轮被当成提问发给模型
+        assertEquals(CliCommandParser.CommandType.SEARCH, CliCommandParser.parse("/search").type());
+        assertNull(CliCommandParser.parse("/search").payload());
+        assertEquals(CliCommandParser.CommandType.GRAPH, CliCommandParser.parse("/graph").type());
+        assertNull(CliCommandParser.parse("/graph").payload());
+    }
+
+    @Test
+    void ragCommandsAreCaseInsensitiveAndTrimmed() {
+        assertEquals(CliCommandParser.CommandType.INDEX, CliCommandParser.parse("  /INDEX  ").type());
+        assertEquals(CliCommandParser.CommandType.SEARCH, CliCommandParser.parse("/SeArCh 登录").type());
+        assertEquals("登录", CliCommandParser.parse("/SeArCh   登录  ").payload());
+        assertEquals(CliCommandParser.CommandType.GRAPH, CliCommandParser.parse("/Graph Foo").type());
+    }
+
+    @Test
+    void ragCommandPrefixesDoNotSwallowSimilarWords() {
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/searchxyz").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/indexing").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/graphql").type());
+        // 只认斜杠形式，避免吞掉自然语言
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("search 用户登录").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("graph ReactAgent").type());
+    }
+
+    @Test
+    void ragCommandsAreOfferedInCompletion() {
+        assertTrue(CliCommandParser.commandNames().contains("/index"));
+        assertTrue(CliCommandParser.commandNames().contains("/search"));
+        assertTrue(CliCommandParser.commandNames().contains("/graph"));
+    }
 }

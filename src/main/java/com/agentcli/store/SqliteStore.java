@@ -114,6 +114,57 @@ public class SqliteStore {
                     latency_ms INTEGER
                 )
                 """);
+            ensureRagSchema(st);
         }
+    }
+
+    /**
+     * v0.18.0：RAG 代码索引双表。
+     *
+     * <p>{@code code_chunks}（向量通路）与 {@code code_relations}（关系通路）刻意互不引用——
+     * 未配置 embedding 时前者为空、后者照常写入，{@code /graph} 因此不受 embedding 影响。
+     *
+     * <p>{@code created_at} 用 epoch millis（对齐 {@code memory_entries}），便于与源码 mtime
+     * 直接比大小做索引失效检测。{@code code_relations} 上的唯一索引让重复抽取到的关系靠
+     * {@code INSERT OR IGNORE} 天然去重，不必在应用层维护去重集合。
+     */
+    private static void ensureRagSchema(Statement st) throws SQLException {
+        st.execute("""
+            CREATE TABLE IF NOT EXISTS code_chunks (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_path    TEXT    NOT NULL,
+                file_path       TEXT    NOT NULL,
+                chunk_type      TEXT    NOT NULL,
+                name            TEXT    NOT NULL,
+                content         TEXT    NOT NULL,
+                start_line      INTEGER NOT NULL DEFAULT 0,
+                end_line        INTEGER NOT NULL DEFAULT 0,
+                embedding_json  TEXT,
+                embedding_dim   INTEGER NOT NULL DEFAULT 0,
+                embedding_model TEXT,
+                created_at      INTEGER NOT NULL
+            )
+            """);
+        st.execute("""
+            CREATE TABLE IF NOT EXISTS code_relations (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_path  TEXT    NOT NULL,
+                from_file     TEXT    NOT NULL,
+                from_name     TEXT    NOT NULL,
+                to_file       TEXT,
+                to_name       TEXT    NOT NULL,
+                relation_type TEXT    NOT NULL,
+                created_at    INTEGER NOT NULL
+            )
+            """);
+        st.execute("CREATE INDEX IF NOT EXISTS idx_code_chunks_project    ON code_chunks(project_path)");
+        st.execute("CREATE INDEX IF NOT EXISTS idx_code_chunks_file       ON code_chunks(project_path, file_path)");
+        st.execute("CREATE INDEX IF NOT EXISTS idx_code_relations_project ON code_relations(project_path)");
+        st.execute("CREATE INDEX IF NOT EXISTS idx_code_relations_from    ON code_relations(project_path, from_name)");
+        st.execute("CREATE INDEX IF NOT EXISTS idx_code_relations_to      ON code_relations(project_path, to_name)");
+        st.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uk_code_relations
+                ON code_relations(project_path, from_file, from_name, to_name, relation_type)
+            """);
     }
 }

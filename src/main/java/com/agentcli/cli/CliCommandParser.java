@@ -25,6 +25,9 @@ final class CliCommandParser {
         AUDIT,
         SKILL,
         LSP,
+        INDEX,
+        SEARCH,
+        GRAPH,
         STATUS,
         USAGE
     }
@@ -45,6 +48,7 @@ final class CliCommandParser {
                 "/memory", "/memory list", "/memory clear", "/memory search", "/memory delete",
                 "/audit",
                 "/skill", "/lsp",
+                "/index", "/search", "/graph",
                 "/status", "/usage");
     }
 
@@ -147,6 +151,26 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "lsp ", 0, 4)) {
             return new ParsedCommand(CommandType.LSP, trimmed.substring(4).trim());
+        }
+        // v0.18.0：RAG 三命令。无参形式也返回对应 CommandType（payload 为 null），
+        // 由 RagCommandHandler 出用法提示；若在此返回 NONE，"/search" 会掉进自然语言轮被当成提问发给模型。
+        if (trimmed.equalsIgnoreCase("/index")) {
+            return new ParsedCommand(CommandType.INDEX, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/index ", 0, 7)) {
+            return new ParsedCommand(CommandType.INDEX, trimmed.substring(7).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/search")) {
+            return new ParsedCommand(CommandType.SEARCH, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/search ", 0, 8)) {
+            return new ParsedCommand(CommandType.SEARCH, trimmed.substring(8).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/graph")) {
+            return new ParsedCommand(CommandType.GRAPH, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/graph ", 0, 7)) {
+            return new ParsedCommand(CommandType.GRAPH, trimmed.substring(7).trim());
         }
         return ParsedCommand.none();
     }
