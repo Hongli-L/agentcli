@@ -16,6 +16,9 @@ import java.util.Set;
 /**
  * 在项目内按关键字或正则实时搜索代码（只读、优先 ripgrep、自动降级纯 Java、返回文件和行号）。
  * 适合精确符号/字符串定位；找到后再用 read_file 读取上下文。
+ *
+ * <p>与 {@link RagSearchTool} 分工：本工具要求调用方已经知道要找的串；
+ * 只知道「某功能大概是干什么的」而说不出确切符号名时，应改走语义检索。
  */
 public class GrepCodeTool extends AbstractTool {
 
@@ -32,7 +35,8 @@ public class GrepCodeTool extends AbstractTool {
     public GrepCodeTool(ToolContext context) {
         super(
                 "grep_code",
-                "在项目内按关键字或正则实时搜索代码（只读、优先 ripgrep、返回文件和行号）；适合精确符号/字符串定位，找到后再 read_file 读取上下文",
+                "在项目内按关键字或正则实时搜索代码（只读、优先 ripgrep、返回文件和行号）；适合精确符号/字符串定位，找到后再 read_file 读取上下文。"
+                        + "不知道确切符号名、想按语义找某个功能在哪实现时，请改用 rag_search",
                 ToolSchema.object(
                         ToolSchema.required("pattern", "string", "要搜索的关键字或正则"),
                         ToolSchema.optional("path", "string", "搜索起始目录，默认 ."),

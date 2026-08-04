@@ -8,7 +8,9 @@ import com.agentcli.tool.builtin.ExecuteCommandTool;
 import com.agentcli.tool.builtin.GlobFilesTool;
 import com.agentcli.tool.builtin.GrepCodeTool;
 import com.agentcli.tool.builtin.ListDirTool;
+import com.agentcli.tool.builtin.RagSearchTool;
 import com.agentcli.tool.builtin.ReadFileTool;
+import com.agentcli.tool.builtin.WebFetchTool;
 import com.agentcli.tool.builtin.WebSearchTool;
 import com.agentcli.tool.builtin.WriteFileTool;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -64,6 +66,8 @@ public class ToolRegistry {
         register(new ExecuteCommandTool(context));
         register(new CreateProjectTool(context));
         register(new WebSearchTool());
+        register(new WebFetchTool());
+        register(new RagSearchTool(context));
     }
 
     /** 注册一个工具（同名覆盖）。 */

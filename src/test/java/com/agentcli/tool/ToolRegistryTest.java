@@ -32,6 +32,20 @@ class ToolRegistryTest {
     }
 
     @Test
+    void registersNetworkAndSemanticSearchTools() {
+        assertTrue(registry.hasTool("web_fetch"));
+        assertTrue(registry.hasTool("rag_search"));
+    }
+
+    @Test
+    void toolDefinitionsIncludeWebFetchAndRagSearch() {
+        Set<String> names = registry.getToolDefinitions().stream()
+                .map(LlmClient.Tool::name)
+                .collect(Collectors.toSet());
+        assertTrue(names.containsAll(Set.of("web_search", "web_fetch", "rag_search")), names.toString());
+    }
+
+    @Test
     void writeThenReadRoundTrip() {
         String write = registry.executeTool("write_file",
                 "{\"path\":\"notes/hello.txt\",\"content\":\"hello world\"}");
