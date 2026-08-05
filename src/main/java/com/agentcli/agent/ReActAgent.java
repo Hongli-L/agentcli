@@ -1,5 +1,7 @@
 package com.agentcli.agent;
 
+import com.agentcli.agent.concurrent.AgentTaskExecutor;
+import com.agentcli.agent.concurrent.CancellationScope;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.context.ContextProfile;
@@ -22,6 +24,14 @@ import java.util.List;
 
 /**
  * ReAct Agent 核心：Thought → Action（tool calls）→ Observation → … → Final Answer。
+ *
+ * <p><b>v0.20.0 · 取消传播第一层（协作式）</b>：在两个安全点轮询
+ * {@link CancellationScope#isCancelled()}——每轮循环开头、以及工具批次派发之前。
+ * 命中即返回统一文案 {@link AgentTaskExecutor#CANCELLED_RESULT}，
+ * 不抛异常：取消是<b>正常控制流</b>，让编排层能把它当作一次「有结果的任务」聚合进最终报告。
+ *
+ * <p>未绑定令牌时 {@code isCancelled()} 恒为 {@code false}，普通 REPL 单轮对话与既有回归
+ * 用例走的仍是一字未改的老路径。
  */
 public class ReActAgent {
 
@@ -111,6 +121,13 @@ public class ReActAgent {
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
 
         while (true) {
+            // 取消安全点 ①：每轮循环开头。此时上一轮的 LLM 调用与工具批次都已收束，
+            // 直接返回不会留下半截的 tool_call 悬空在历史里。
+            if (CancellationScope.isCancelled()) {
+                log.info("ReAct run cancelled at iteration boundary: iteration={}", budget.iteration());
+                return AgentTaskExecutor.CANCELLED_RESULT;
+            }
+
             AgentBudget.ExitReason exitReason = budget.check();
             if (exitReason != AgentBudget.ExitReason.WITHIN_BUDGET) {
                 String message = UserFacingErrors.fail(budget.describeExit(exitReason));
@@ -150,6 +167,13 @@ public class ReActAgent {
                             response.toolCalls()
                     ));
 
+                    // 取消安全点 ②：工具批次派发之前。工具可能是 write_file / execute_command
+                    // 这类有副作用的操作，已取消就绝不能再放出去。
+                    if (CancellationScope.isCancelled()) {
+                        log.info("ReAct run cancelled before tool batch: iteration={}", iteration);
+                        return AgentTaskExecutor.CANCELLED_RESULT;
+                    }
+
                     listener.onToolCalls(response.toolCalls());
                     List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls());
                     // LSP 诊断回灌钩子：在结果写入对话历史之前注入（null 时零干预）
@@ -179,6 +203,12 @@ public class ReActAgent {
                 return answer;
 
             } catch (IOException e) {
+                // Call.cancel() 打断 SSE 时会以 IOException 冒泡，这是主动取消而非网络故障，
+                // 不能报成 "LLM 调用失败" 污染用户视野。
+                if (CancellationScope.isCancelled()) {
+                    log.info("ReAct run cancelled during LLM call: iteration={}", iteration);
+                    return AgentTaskExecutor.CANCELLED_RESULT;
+                }
                 log.error("LLM call failed in ReAct loop", e);
                 return UserFacingErrors.llmFailure(e.getMessage());
             }

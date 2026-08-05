@@ -131,4 +131,40 @@ class CliCommandParserTest {
         assertTrue(CliCommandParser.commandNames().contains("/search"));
         assertTrue(CliCommandParser.commandNames().contains("/graph"));
     }
+
+    // ---------------------------------------------------------------- v0.20.0 多 Agent 三命令
+
+    @Test
+    void orchestrationCommandsAreParsedWithTrimmedPayload() {
+        var team = CliCommandParser.parse("/team 分析项目结构并总结三个改进点");
+        assertEquals(CliCommandParser.CommandType.TEAM, team.type());
+        assertEquals("分析项目结构并总结三个改进点", team.payload());
+
+        var cancel = CliCommandParser.parse("/cancel   task_2  ");
+        assertEquals(CliCommandParser.CommandType.CANCEL, cancel.type());
+        assertEquals("task_2", cancel.payload());
+
+        var tasks = CliCommandParser.parse("  /TASKS  ");
+        assertEquals(CliCommandParser.CommandType.TASKS, tasks.type());
+        assertNull(tasks.payload());
+    }
+
+    @Test
+    void orchestrationCommandsWithoutArgumentsStillReturnTheirType() {
+        // 无参也必须被识别为命令，否则 "/team" 会掉进自然语言轮被当成提问发给模型
+        assertEquals(CliCommandParser.CommandType.TEAM, CliCommandParser.parse("/team").type());
+        assertNull(CliCommandParser.parse("/team").payload());
+        assertEquals(CliCommandParser.CommandType.CANCEL, CliCommandParser.parse("/CANCEL").type());
+        assertNull(CliCommandParser.parse("/cancel").payload());
+
+        // 前缀不得吞掉相似词
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/teamwork").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/cancellation").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("/taskset").type());
+        assertEquals(CliCommandParser.CommandType.NONE, CliCommandParser.parse("team 分析项目").type());
+
+        assertTrue(CliCommandParser.commandNames().contains("/team"));
+        assertTrue(CliCommandParser.commandNames().contains("/cancel"));
+        assertTrue(CliCommandParser.commandNames().contains("/tasks"));
+    }
 }

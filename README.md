@@ -14,6 +14,14 @@
 | 对话记忆 | 短期对话历史 + 长期事实记忆 + Token 预算 + LLM 摘要压缩 |
 | 安全围栏 | 路径沙箱、命令黑名单、写文件大小上限、命令超时与输出截断 |
 | 联网搜索 | 多 Provider 抽象（智谱 / SerpAPI / SearXNG），结果截断与异常降级 |
+| 并发任务底座 | `AgentTask` CAS 状态机（PENDING→RUNNING→{DONE\|FAILED\|CANCELLED\|TIMEOUT}）+ 固定线程池 + 单任务/全局双层超时 + `finally` 资源回收 |
+| 三层协作式取消 | ① 协作轮询取消标志 ② `Future.cancel(true)` 线程中断 ③ HTTP 句柄级 `Call.cancel()`，父子令牌级联，`/cancel` 一键收手 |
+| 多 Agent 编排 | planner 拆解依赖 DAG → 多 worker 并行执行（上下文相互隔离）→ reviewer 一次复核 → 结果聚合，部分失败降级不丢已有产出 |
+
+> **关于多 Agent 编排的口径**：这不是首创设计。多 Agent 编排（planner/worker/reviewer）与协作式取消
+> 是业界已有的通行做法，本项目参考实现中亦有等价类。本版的工程增量在于：worker **串行预创建后池化**
+> 避免并行任务体内构造共享注册表、取消做到**三层**（协作标志 / 线程中断 / HTTP 句柄）并用 `ThreadLocal`
+> 作用域下沉到传输层而不改动 `LlmClient` 接口签名、部分失败**收敛为降级结果**而非让 `allOf` 整批抛出。
 
 ## 架构
 
@@ -99,7 +107,15 @@ java -jar target/agentcli-1.0.0.jar --provider deepseek -C /path/to/project
 | `/memory delete <id>` | 删除指定记忆 |
 | `/memory clear` | 清空长期记忆 |
 | `/compact` | 手动压缩对话历史 |
+| `/plan <目标>` | 单 Agent 先规划再分步顺序执行（共享一份对话历史） |
+| `/team <目标>` | 多 Agent 并行协作完成目标并复核结果（各 worker 历史隔离） |
+| `/tasks` | 查看最近一轮编排的任务快照（状态 / 角色 / 耗时 / 错误摘要） |
+| `/cancel [任务ID]` | 取消全部 / 指定编排任务（三层取消同时下手） |
 | `/exit` | 退出 |
+
+> `/plan` 与 `/team` 共用同一个 `Planner` 做任务拆解，区别只在执行阶段：`/plan` 由**单个** Agent
+> 顺序跑完全部子任务、上下文连续；`/team` 把子任务分发给**多个隔离的 worker** 并行跑、末尾统一复核。
+> 子任务彼此独立时 `/team` 更快，需要连续上下文推理时 `/plan` 更稳。
 
 ## 内置工具
 
@@ -145,6 +161,8 @@ mvn test -DskipTests=false -DforkCount=0
 src/main/java/com/agentcli/
 ├── cli/        入口、REPL、命令解析、流式控制台
 ├── agent/      ReAct 循环、预算控制、系统提示词
+│   ├── concurrent/     任务状态机、执行器、取消令牌与作用域
+│   └── orchestration/  编排门面、worker 池、reviewer、结果聚合
 ├── llm/        多模型抽象与 SSE 客户端
 ├── tool/       工具框架、内置工具、代码搜索引擎
 ├── web/        联网搜索 Provider

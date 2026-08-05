@@ -57,7 +57,14 @@ public class AuditLog {
         insert("approval", toolName, detail.toString(), null, null);
     }
 
-    private void insert(String kind, String target, String detailJson, Integer tokens, Long latencyMs) {
+    /**
+     * 写入一条审计记录。
+     *
+     * <p>包级可见而非私有：v0.20.0 的 {@link OrchestrationTrace} 复用同一张 {@code audit_log} 表
+     * 落编排轨迹（{@code kind="orchestration"}），共用这里的短连接 + 异常吞掉语义，
+     * 无需为它另开一套公共 API 或复制一份 SQL。
+     */
+    void insert(String kind, String target, String detailJson, Integer tokens, Long latencyMs) {
         try (Connection conn = store.connect();
              PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO audit_log (ts, kind, target, detail_json, tokens, latency_ms) "

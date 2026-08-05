@@ -29,7 +29,10 @@ final class CliCommandParser {
         SEARCH,
         GRAPH,
         STATUS,
-        USAGE
+        USAGE,
+        TEAM,
+        CANCEL,
+        TASKS
     }
 
     record ParsedCommand(CommandType type, String payload) {
@@ -49,7 +52,8 @@ final class CliCommandParser {
                 "/audit",
                 "/skill", "/lsp",
                 "/index", "/search", "/graph",
-                "/status", "/usage");
+                "/status", "/usage",
+                "/team", "/cancel", "/tasks");
     }
 
     private CliCommandParser() {
@@ -171,6 +175,23 @@ final class CliCommandParser {
         }
         if (trimmed.regionMatches(true, 0, "/graph ", 0, 7)) {
             return new ParsedCommand(CommandType.GRAPH, trimmed.substring(7).trim());
+        }
+        // v0.20.0：多 Agent 协作三命令。与 RAG 三命令同一口径——无参形式也返回对应 CommandType
+        // （payload 为 null），由处理器出用法提示；若在此返回 NONE，"/team" 会掉进自然语言轮被当成提问。
+        if (trimmed.equalsIgnoreCase("/team")) {
+            return new ParsedCommand(CommandType.TEAM, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/team ", 0, 6)) {
+            return new ParsedCommand(CommandType.TEAM, trimmed.substring(6).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/cancel")) {
+            return new ParsedCommand(CommandType.CANCEL, null);
+        }
+        if (trimmed.regionMatches(true, 0, "/cancel ", 0, 8)) {
+            return new ParsedCommand(CommandType.CANCEL, trimmed.substring(8).trim());
+        }
+        if (trimmed.equalsIgnoreCase("/tasks")) {
+            return new ParsedCommand(CommandType.TASKS, null);
         }
         return ParsedCommand.none();
     }

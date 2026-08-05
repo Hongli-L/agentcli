@@ -3,6 +3,7 @@ package com.agentcli.cli;
 import com.agentcli.agent.ReActAgent;
 import com.agentcli.audit.AuditLog;
 import com.agentcli.audit.AuditLlmClient;
+import com.agentcli.audit.OrchestrationTrace;
 import com.agentcli.common.AppConfig;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
@@ -124,6 +125,11 @@ public final class Launcher {
                 : new InteractiveSession(agent, client, config, null, skillRegistry, skillStateStore);
         if (lspManager != null && lspConfig != null) {
             session.setLspManager(lspManager, lspConfig);
+        }
+        // v0.20.0：编排轨迹复用审计表落盘。无审计（SQLite 不可用）时保持 null，
+        // 编排照常运行，只是不留时间线——观测能力降级，核心能力不降级。
+        if (auditLog != null) {
+            session.setOrchestrationTrace(new OrchestrationTrace(auditLog));
         }
 
         McpServerManager mcpManager = new McpServerManager(toolRegistry, Path.of(projectPath));

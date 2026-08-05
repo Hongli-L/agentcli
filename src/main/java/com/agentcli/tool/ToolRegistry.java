@@ -1,5 +1,7 @@
 package com.agentcli.tool;
 
+import com.agentcli.agent.concurrent.CancellationScope;
+import com.agentcli.agent.concurrent.CancellationToken;
 import com.agentcli.common.PolicyException;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.llm.LlmClient;
@@ -17,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,16 @@ import java.util.concurrent.TimeUnit;
  *
  * 单工具走 {@link #executeTool}；同一轮多个 tool_call 走 {@link #executeTools}，
  * 在固定线程池内并行执行，结果仍按传入顺序返回，便于回灌消息历史。
+ *
+ * <p><b>并发注册的防御性加固</b>：{@code ReActAgent} 构造函数会调用
+ * {@code register(new SaveMemoryTool(...))}，多个 Agent 若并发构造会对同一张 map 并发写。
+ * 裸 {@link LinkedHashMap} 的并发 {@code put} 可能破坏内部结构（丢数据甚至死循环），
+ * 因此这里包一层 {@link Collections#synchronizedMap}，并在 {@link #getToolDefinitions()}
+ * 里用手动同步块做保序快照——{@code synchronizedMap} 的<b>迭代不自动加锁</b>，
+ * 不加同步块仍会抛 {@code ConcurrentModificationException}。
+ *
+ * <p>加固之外仍保留硬约定：worker 必须在编排线程上<b>串行预创建</b>后池化复用，
+ * 不允许在并行任务体内 {@code new ReActAgent(...)}。加固是安全网，不是许可证。
  */
 public class ToolRegistry {
 
@@ -39,7 +52,7 @@ public class ToolRegistry {
     private static final int DEFAULT_TOOL_BATCH_TIMEOUT_SECONDS = 90;
     private static final int MAX_PARALLEL_TOOLS = 4;
 
-    private final Map<String, Tool> tools = new LinkedHashMap<>();
+    private final Map<String, Tool> tools = Collections.synchronizedMap(new LinkedHashMap<>());
     private final ToolContext context;
     private final long toolBatchTimeoutSeconds;
 
@@ -93,9 +106,18 @@ public class ToolRegistry {
         return context.projectPath().toString();
     }
 
-    /** 工具定义列表，供构造 LLM 请求时附带。 */
+    /**
+     * 工具定义列表，供构造 LLM 请求时附带。
+     *
+     * <p>先在同步块内做<b>保序</b>快照（{@link LinkedHashMap} 的插入序即为工具展示序），
+     * 出块后再流式转换：转换过程可能较慢，不该占着锁不放。
+     */
     public List<LlmClient.Tool> getToolDefinitions() {
-        return tools.values().stream()
+        List<Tool> snapshot;
+        synchronized (tools) {
+            snapshot = new ArrayList<>(tools.values());
+        }
+        return snapshot.stream()
                 .map(t -> new LlmClient.Tool(t.name(), t.description(), t.parameters()))
                 .toList();
     }
@@ -122,10 +144,17 @@ public class ToolRegistry {
         if (invocations == null || invocations.isEmpty()) {
             return List.of();
         }
+        // 取消安全点：整批还没开跑就已被取消，一个副作用都不放出去。
+        if (CancellationScope.isCancelled()) {
+            return allCancelled(invocations);
+        }
         if (invocations.size() == 1) {
             ToolInvocation invocation = invocations.get(0);
             long startedAt = System.nanoTime();
             String result = doExecuteTool(invocation.name(), invocation.argumentsJson());
+            if (CancellationScope.isCancelled()) {
+                return List.of(ToolExecutionResult.cancelled(invocation));
+            }
             return List.of(ToolExecutionResult.completed(invocation, result, elapsedMillis(startedAt)));
         }
 
@@ -136,12 +165,23 @@ public class ToolRegistry {
             return thread;
         });
 
+        // 工具批次的子线程不继承 ThreadLocal，改为在提交前捕获父线程令牌并显式下传，
+        // 让每个工具体也能在自己的线程上看到同一份取消状态。
+        CancellationToken token = CancellationScope.current();
+        // L3 句柄：取消时直接 shutdownNow 打断整批工具线程；finally 必定注销，避免令牌长期持有已废弃的池。
+        Runnable hook = token == null ? null : token.onCancel(executor::shutdownNow);
+
         try {
             List<Callable<ToolExecutionResult>> tasks = invocations.stream()
                     .<Callable<ToolExecutionResult>>map(invocation -> () -> {
                         long startedAt = System.nanoTime();
-                        String result = doExecuteTool(invocation.name(), invocation.argumentsJson());
-                        return ToolExecutionResult.completed(invocation, result, elapsedMillis(startedAt));
+                        return CancellationScope.call(token, () -> {
+                            if (CancellationScope.isCancelled()) {
+                                return ToolExecutionResult.cancelled(invocation);
+                            }
+                            String result = doExecuteTool(invocation.name(), invocation.argumentsJson());
+                            return ToolExecutionResult.completed(invocation, result, elapsedMillis(startedAt));
+                        });
                     })
                     .toList();
 
@@ -149,35 +189,55 @@ public class ToolRegistry {
                     executor.invokeAll(tasks, toolBatchTimeoutSeconds, TimeUnit.SECONDS);
 
             List<ToolExecutionResult> results = new ArrayList<>();
+            boolean cancelled = CancellationScope.isCancelled();
             for (int i = 0; i < futures.size(); i++) {
                 ToolInvocation invocation = invocations.get(i);
                 Future<ToolExecutionResult> future = futures.get(i);
                 if (future.isCancelled()) {
-                    results.add(ToolExecutionResult.timedOut(invocation, toolBatchTimeoutSeconds));
+                    // 被取消掐断与被批次超时掐断在 Future 上无法区分，靠令牌状态判定语义
+                    results.add(cancelled
+                            ? ToolExecutionResult.cancelled(invocation)
+                            : ToolExecutionResult.timedOut(invocation, toolBatchTimeoutSeconds));
                     continue;
                 }
                 try {
                     results.add(future.get());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    results.add(ToolExecutionResult.failed(invocation, "工具执行被中断"));
+                    results.add(cancelled
+                            ? ToolExecutionResult.cancelled(invocation)
+                            : ToolExecutionResult.failed(invocation, "工具执行被中断"));
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause();
                     String message = cause == null || cause.getMessage() == null
                             ? "未知错误"
                             : cause.getMessage();
-                    results.add(ToolExecutionResult.failed(invocation, message));
+                    results.add(cancelled
+                            ? ToolExecutionResult.cancelled(invocation)
+                            : ToolExecutionResult.failed(invocation, message));
                 }
             }
             return results;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            if (CancellationScope.isCancelled()) {
+                return allCancelled(invocations);
+            }
             return invocations.stream()
                     .map(invocation -> ToolExecutionResult.failed(invocation, "工具批次执行被中断"))
                     .toList();
         } finally {
+            if (hook != null) {
+                token.removeHook(hook);
+            }
             executor.shutdownNow();
         }
+    }
+
+    private static List<ToolExecutionResult> allCancelled(List<ToolInvocation> invocations) {
+        return invocations.stream()
+                .map(ToolExecutionResult::cancelled)
+                .toList();
     }
 
     protected String doExecuteTool(String name, String argumentsJson) {

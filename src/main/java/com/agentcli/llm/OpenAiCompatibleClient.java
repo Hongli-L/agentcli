@@ -1,9 +1,12 @@
 package com.agentcli.llm;
 
+import com.agentcli.agent.concurrent.CancellationScope;
+import com.agentcli.agent.concurrent.CancellationToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import okhttp3.Call;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -22,10 +25,29 @@ import java.util.concurrent.TimeUnit;
  *
  * 用模板方法模式封装「构造请求体 -> 发起 SSE 流式请求 -> 增量解析 -> 聚合结果」的通用流程，
  * 子类只需提供 url / model / apiKey 三个钩子即可接入新模型（必要时再覆写少量 hook）。
+ *
+ * <p><b>v0.20.0 · 取消传播第三层（句柄级）</b>：这里持有 {@link Call} 句柄并注册到当前线程的
+ * {@link CancellationToken} 上，{@code finally} 必须注销钩子，否则 token 会一直强引用
+ * 已完成的 Call（内存泄漏）。
+ *
+ * <p><b>为什么有了线程中断还需要这一层</b>（实测结论，勿按旧经验回改）：流传甚广的说法是
+ * 「{@code Thread.interrupt()} 唤不醒阻塞在 socket 上的读」——这在 JDK 13+ 已经<b>不成立</b>。
+ * JDK 13 起 {@code NioSocketImpl} 取代了旧的 {@code PlainSocketImpl}，实测（JDK 17 / Windows 11）
+ * 对阻塞在 SSE 读取上的线程 interrupt，百毫秒级即抛出 {@link java.io.InterruptedIOException}。
+ * 所以 L3 的价值<b>不是「唯一能中止」，而是「让中止语义可识别」</b>：单靠中断拿到的
+ * {@code InterruptedIOException} 与真实网络抖动长得一模一样，上层只能报「LLM 调用失败」；
+ * 唯有走 {@link Call#cancel()} 才能确定性地转成 {@link #CANCELLED_MESSAGE}，
+ * 让用户看到「已取消」而不是一个疑似故障。对照实证见 {@code LlmCancellationTest}。
+ *
+ * <p>{@link CancellationScope#current()} 为 {@code null} 时（普通 REPL 单轮对话、
+ * 全部历史单元测试）走完全相同的老路径，零侵入。
  */
 public abstract class OpenAiCompatibleClient implements LlmClient {
 
     protected static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** 取消后统一抛出的异常消息，上层据此识别「用户主动取消」而非「网络故障」。 */
+    static final String CANCELLED_MESSAGE = "已取消";
 
     // SSE 下 readTimeout 是「两次 read 之间的最大间隔」而非请求总时长；
     // 模型生成大段 reasoning 时服务端可能长时间静默，故放宽默认值，并允许系统属性覆盖。
@@ -85,7 +107,15 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
                 .post(body);
         customizeRequest(request);
 
-        try (Response response = httpClient().newCall(request.build()).execute()) {
+        CancellationToken token = CancellationScope.current();
+        // 请求还没发出就已经被取消：直接短路，别浪费一次 API 调用。
+        if (token != null && token.isCancelled()) {
+            throw new IOException(CANCELLED_MESSAGE);
+        }
+
+        Call call = httpClient().newCall(request.build());
+        Runnable hook = token == null ? null : token.onCancel(call::cancel);
+        try (Response response = call.execute()) {
             ResponseBody responseBody = response.body();
             if (!response.isSuccessful()) {
                 String errorBody = responseBody != null ? responseBody.string() : "无响应体";
@@ -94,11 +124,23 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
             if (responseBody == null) {
                 throw new IOException("API 返回空响应体");
             }
-            return parseStream(responseBody.source(), streamListener);
+            return parseStream(responseBody.source(), streamListener, token);
+        } catch (IOException e) {
+            // Call.cancel() 会让阻塞中的 read 抛 IOException("Canceled")，
+            // 这里统一翻译成取消语义，避免上层把主动取消误报成网络故障。
+            if (token != null && token.isCancelled()) {
+                throw new IOException(CANCELLED_MESSAGE);
+            }
+            throw e;
+        } finally {
+            if (hook != null) {
+                token.removeHook(hook);
+            }
         }
     }
 
-    private ChatResponse parseStream(BufferedSource source, StreamListener listener) throws IOException {
+    private ChatResponse parseStream(BufferedSource source, StreamListener listener, CancellationToken token)
+            throws IOException {
         String role = "assistant";
         StringBuilder content = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
@@ -109,6 +151,11 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
         String lastContentDelta = "";
 
         while (!source.exhausted()) {
+            // 每个 chunk 轮询一次：即使 Call.cancel() 因竞态没能打断本次 read，
+            // 下一轮也一定会退出，不会把已取消的任务继续跑到底。
+            if (token != null && token.isCancelled()) {
+                throw new IOException(CANCELLED_MESSAGE);
+            }
             String line = source.readUtf8Line();
             if (line == null) {
                 break;

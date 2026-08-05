@@ -40,4 +40,21 @@ public record ToolExecutionResult(
                 true
         );
     }
+
+    /**
+     * 协作式取消导致未执行/未完成的工具调用。
+     *
+     * <p>与 {@link #timedOut} 区分：超时是「跑了但没跑完」，取消是「用户主动叫停」，
+     * {@code timedOut} 标志保持 false，避免上层把用户取消统计成超时率。
+     */
+    static ToolExecutionResult cancelled(ToolInvocation invocation) {
+        return new ToolExecutionResult(
+                invocation.id(),
+                invocation.name(),
+                invocation.argumentsJson(),
+                "工具执行已取消",
+                0,
+                false
+        );
+    }
 }

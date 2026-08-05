@@ -1,6 +1,8 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
+import com.agentcli.agent.orchestration.OrchestrationConfig;
+import com.agentcli.testsupport.ConcurrentStubLlmClient;
 import com.agentcli.testsupport.StubLlmClient;
 import com.agentcli.common.AppConfig;
 import com.agentcli.llm.LlmClient;
@@ -266,6 +268,123 @@ class InteractiveSessionTest {
         assertTrue(text.contains("/index"), text);
         assertTrue(text.contains("/search"), text);
         assertTrue(text.contains("/graph"), text);
+    }
+
+    // ---------------------------------------------------------------- v0.20.0 编排三命令集成
+
+    /** 含「然后」，绕开 {@code Planner#isSimpleGoal} 的单任务短路，必定走 LLM 规划路径。 */
+    private static final String TEAM_GOAL = "读取项目配置，然后输出一份差异分析报告";
+
+    /** 两步链式计划：{@code task_2} 依赖 {@code task_1}，串行执行顺序确定。 */
+    private static final String CHAIN_PLAN = """
+            {"summary":"两步计划","tasks":[
+              {"id":"1","description":"读取配置文件","type":"FILE_READ","dependencies":[]},
+              {"id":"2","description":"分析配置差异","type":"ANALYSIS","dependencies":["1"]}
+            ]}""";
+
+    @Test
+    void teamCommandRunsWholeOrchestrationAndPrintsAggregateReport(@TempDir Path teamRoot) {
+        // 关掉 reviewer 并把并发压到 1：REPL 集成测试只验证「命令→编排→报告」这条链路是否接通，
+        // 并发行为与复核解析各有专门的单测覆盖，这里不重复也不引入调度不确定性。
+        ConcurrentStubLlmClient stub = new ConcurrentStubLlmClient("stub", "stub")
+                .withPlan(CHAIN_PLAN)
+                .withWorkerAnswer("task_1", "配置读取完毕：端口 8080")
+                .withWorkerAnswer("task_2", "分析完毕：无异常配置项");
+        InteractiveSession teamSession = newOrchestrationSession(stub, teamRoot);
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        try {
+            // 空参数先给用法提示，且绝不触发任何 LLM 调用
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/team"), out));
+            String usage = output.toString(StandardCharsets.UTF_8);
+            assertTrue(usage.contains("用法: /team"), usage);
+            assertTrue(usage.contains("/plan"), "用法提示需说明与 /plan 的边界: " + usage);
+            assertEquals(0, stub.chatCalls(), "空目标不应产生任何 LLM 调用");
+
+            output.reset();
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/team " + TEAM_GOAL), out));
+
+            String text = output.toString(StandardCharsets.UTF_8);
+            assertTrue(text.contains("完成 2/2"), text);
+            assertTrue(text.contains("配置读取完毕：端口 8080"), text);
+            assertTrue(text.contains("分析完毕：无异常配置项"), text);
+            assertEquals(1, stub.plannerCalls(), "规划只调用一次");
+            assertEquals(2, stub.workerCalls());
+            assertEquals(0, stub.reviewerCalls(), "reviewerEnabled=false 时不应多花一次 LLM 调用");
+            assertEquals(1, stub.peakConcurrency(), "maxParallel=1 必须严格串行");
+            assertTrue(!text.contains("未成功"), "全部成功时不应出现降级提示: " + text);
+        } finally {
+            teamSession.closeTaskExecutor();
+        }
+    }
+
+    @Test
+    void tasksAndCancelReflectExecutorStateBeforeAndAfterOrchestration(@TempDir Path teamRoot) {
+        ConcurrentStubLlmClient stub = new ConcurrentStubLlmClient("stub", "stub")
+                .withPlan(CHAIN_PLAN)
+                .withDefaultWorkerAnswer("子任务完成");
+        InteractiveSession teamSession = newOrchestrationSession(stub, teamRoot);
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+
+        try {
+            // ① 从未编排过：执行器根本没被创建，两条命令都走空态而不是抛 NPE
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/tasks"), out));
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/cancel"), out));
+            String empty = output.toString(StandardCharsets.UTF_8);
+            assertEquals(2, countOccurrences(empty, "暂无编排任务。"), empty);
+
+            // ② 跑一轮编排后，快照必须留存本轮全部任务（含已完成的），供用户回看
+            output.reset();
+            teamSession.handleCommand(CliCommandParser.parse("/team " + TEAM_GOAL), out);
+            output.reset();
+
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/tasks"), out));
+            String listed = output.toString(StandardCharsets.UTF_8);
+            assertTrue(listed.contains("编排任务 (2 个):"), listed);
+            assertTrue(listed.contains("task_1"), listed);
+            assertTrue(listed.contains("task_2"), listed);
+            assertTrue(listed.contains("DONE"), listed);
+
+            // ③ 任务已全部终态：无参 /cancel 不该谎报「已取消 N 个」
+            output.reset();
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/cancel"), out));
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("没有正在运行的任务。"),
+                    output.toString(StandardCharsets.UTF_8));
+
+            // ④ 指名取消一个不存在的 id：明确回报未命中，而不是静默成功
+            output.reset();
+            assertTrue(teamSession.handleCommand(CliCommandParser.parse("/cancel task_404"), out));
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("未找到运行中的任务: task_404"),
+                    output.toString(StandardCharsets.UTF_8));
+        } finally {
+            teamSession.closeTaskExecutor();
+        }
+    }
+
+    @Test
+    void sessionHelpMentionsOrchestrationCommands() {
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        InteractiveSession.printSessionHelp(out);
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("/team"), text);
+        assertTrue(text.contains("/cancel"), text);
+        assertTrue(text.contains("/tasks"), text);
+    }
+
+    /**
+     * 造一个以并发桩为后端的会话：串行 + 关闭 reviewer，让 REPL 集成断言完全确定。
+     *
+     * <p>注意会话与编排器共享同一个 {@code LlmClient}——这正是生产装配的形态，
+     * 用桩替换后 planner / worker / reviewer 三种调用由桩按内容自行路由。
+     */
+    private InteractiveSession newOrchestrationSession(ConcurrentStubLlmClient stub, Path root) {
+        ReActAgent orchestrationAgent = new ReActAgent(stub, new ToolRegistry(root.toString()));
+        InteractiveSession orchestrationSession =
+                new InteractiveSession(orchestrationAgent, stub, new AppConfig());
+        orchestrationSession.setOrchestrationConfig(
+                new OrchestrationConfig(1, 1, 30_000L, 60_000L, false, 200));
+        return orchestrationSession;
     }
 
     /** 记录派发参数的门面桩：三个方法全部覆写，底层依赖不会被触碰。 */

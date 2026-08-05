@@ -1,8 +1,14 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.ReActAgent;
+import com.agentcli.agent.concurrent.AgentTaskExecutor;
+import com.agentcli.agent.concurrent.AgentTaskView;
+import com.agentcli.agent.orchestration.AgentOrchestrator;
+import com.agentcli.agent.orchestration.OrchestrationConfig;
+import com.agentcli.agent.orchestration.OrchestrationResult;
 import com.agentcli.audit.AuditLog;
 import com.agentcli.audit.AuditLlmClient;
+import com.agentcli.audit.OrchestrationTrace;
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.AppConfig;
 import com.agentcli.context.ContextProfile;
@@ -32,6 +38,7 @@ import com.agentcli.tool.ToolRegistry;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.sql.SQLException;
+import java.util.List;
 
 /**
  * 交互式 REPL：读取用户输入，分发斜杠命令或交给 {@link ReActAgent} 处理。
@@ -50,6 +57,23 @@ public class InteractiveSession {
     private MentionResolver mentionResolver;
     private RagCommandHandler ragHandler;
     private boolean ragHandlerResolved;
+
+    /**
+     * v0.20.0：会话级并发执行器，{@code /team} {@code /cancel} {@code /tasks} 三命令共用。
+     *
+     * <p><b>为什么必须是会话级而不是每次 {@code /team} 新建</b>：{@code /cancel} 与 {@code /tasks}
+     * 要能看见「正在跑的那一轮编排」的任务。若每次编排自带私有执行器并在结束时关掉，
+     * 任务注册表随之消失，两个命令永远只能打印空表。
+     *
+     * <p>懒加载：没用过 {@code /team} 的会话不会创建线程池，纯对话场景零额外线程。
+     */
+    private AgentTaskExecutor taskExecutor;
+
+    /** v0.20.0：编排轨迹落盘器，允许为 {@code null}（未启用 SQLite 审计时）。 */
+    private OrchestrationTrace orchestrationTrace;
+
+    /** v0.20.0：编排参数。默认取 {@link OrchestrationConfig#defaults()}，测试可替换为小超时配置。 */
+    private OrchestrationConfig orchestrationConfig = OrchestrationConfig.defaults();
 
     public InteractiveSession(ReActAgent agent, LlmClient llmClient, AppConfig config) {
         this(agent, llmClient, config, null, null, null);
@@ -71,6 +95,16 @@ public class InteractiveSession {
 
     public void setMcpManager(McpServerManager mcpManager) {
         this.mcpManager = mcpManager;
+    }
+
+    /** v0.20.0：注入编排轨迹落盘器；{@code null} 表示不落盘。 */
+    public void setOrchestrationTrace(OrchestrationTrace trace) {
+        this.orchestrationTrace = trace;
+    }
+
+    /** v0.20.0：覆盖编排参数（测试用小超时；生产走 {@link OrchestrationConfig#defaults()}）。 */
+    public void setOrchestrationConfig(OrchestrationConfig config) {
+        this.orchestrationConfig = config == null ? OrchestrationConfig.defaults() : config;
     }
 
     /** v0.14.0：注入 @mention 解析器，供自然语言轮（NONE）解析自由文本。 */
@@ -130,6 +164,9 @@ public class InteractiveSession {
             if (lspManager != null) {
                 lspManager.stopAll();
             }
+            // v0.20.0：退出前关停编排线程池。池线程虽是 daemon（不会阻止 JVM 退出），
+            // 但显式关停能取消在跑任务并释放其持有的 HTTP 连接，避免退出时刷一片超时告警。
+            closeTaskExecutor();
             input.close();
         }
     }
@@ -248,6 +285,18 @@ public class InteractiveSession {
             }
             case USAGE -> {
                 handleUsage(out);
+                yield true;
+            }
+            case TEAM -> {
+                handleTeam(command.payload(), out);
+                yield true;
+            }
+            case CANCEL -> {
+                handleCancel(command.payload(), out);
+                yield true;
+            }
+            case TASKS -> {
+                handleTasks(out);
                 yield true;
             }
             case NONE -> false;
@@ -575,6 +624,117 @@ public class InteractiveSession {
         }
     }
 
+    /**
+     * {@code /team <目标>}：多 Agent 协作编排。
+     *
+     * <p><b>与 {@code /plan} 的边界</b>：两者都调用同一个 {@code Planner} 做任务拆解，区别在执行阶段——
+     * {@code /plan} 由<b>单个</b> Agent 顺序跑完全部子任务，共享一份对话历史；
+     * {@code /team} 把子任务分发给<b>多个隔离的 worker</b> 并行跑，各自独立历史，末尾再由 reviewer
+     * 复核聚合结果。子任务之间彼此独立时 {@code /team} 更快，需要连续上下文推理时 {@code /plan} 更稳。
+     *
+     * <p>编排器每次新建但共享会话级执行器：新建成本只是预创建 3 个 worker（无网络 IO），
+     * 换来的是「本轮参数与 worker 状态干净」；共享执行器则保证 {@code /tasks} {@code /cancel} 可见。
+     */
+    private void handleTeam(String goal, PrintStream out) {
+        if (goal == null || goal.isBlank()) {
+            out.println("用法: /team <目标> —— 例如 /team 分析项目结构并总结三个改进点");
+            out.println("      与 /plan 的区别：/plan 单 Agent 顺序执行，/team 多 Agent 并行协作后复核");
+            return;
+        }
+        AgentTaskExecutor executor = taskExecutor();
+        // 新一轮编排开始前清掉上一轮的终态任务，避免 /tasks 无限增长；
+        // 本轮结束后不清，用户仍能用 /tasks 回看刚跑完的这一轮。
+        executor.clearFinished();
+
+        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
+                llmClient, agent.getToolRegistry(), orchestrationConfig, executor)) {
+            orchestrator.setTrace(orchestrationTrace);
+            orchestrator.setOut(out);
+            OrchestrationResult result = orchestrator.run(goal);
+            out.println();
+            out.println(result.render());
+            if (result.degraded() && result.failedCount() > 0) {
+                out.println(AnsiStyle.subtle(
+                        "提示: 有 " + result.failedCount() + " 个子任务未成功，可用 /tasks 查看详情。"));
+            }
+        } catch (RuntimeException e) {
+            // 编排门面本身已把失败收敛为 OrchestrationResult.failed，这里兜住构造期异常
+            // （如 worker 预创建失败），保证一条命令出错不掀翻整个 REPL。
+            out.println("❌ 编排启动失败: " + describeError(e));
+        }
+    }
+
+    /**
+     * {@code /cancel [taskId]}：无参取消全部在跑任务，带参精确取消一个。
+     *
+     * <p><b>使用时机</b>：本版 {@code /team} 是阻塞式命令（REPL 线程等编排跑完），所以
+     * {@code /cancel} 实际生效于两种场景——① 上一轮编排被 Ctrl+C 打断后残留的任务；
+     * ② 后续版本把编排后台化之后的运行中取消。取消是三层同时下手（协作标志 / 线程中断 /
+     * HTTP 句柄关闭），因此即使 worker 正卡在 LLM 长响应上也能立刻收手。
+     */
+    private void handleCancel(String taskId, PrintStream out) {
+        if (taskExecutor == null) {
+            out.println("暂无编排任务。");
+            return;
+        }
+        if (taskId == null || taskId.isBlank()) {
+            int count = taskExecutor.cancelAll();
+            out.println(count == 0 ? "没有正在运行的任务。" : "已请求取消 " + count + " 个任务。");
+            return;
+        }
+        String normalized = taskId.trim();
+        boolean hit = taskExecutor.cancel(normalized);
+        out.println(hit ? "已请求取消 " + normalized + "。" : "未找到运行中的任务: " + normalized);
+    }
+
+    /** {@code /tasks}：列出本会话最近一轮编排的全部任务快照（含已完成）。 */
+    private void handleTasks(PrintStream out) {
+        if (taskExecutor == null || taskExecutor.taskCount() == 0) {
+            out.println("暂无编排任务。");
+            return;
+        }
+        List<AgentTaskView> views = taskExecutor.snapshot();
+        if (views.isEmpty()) {
+            out.println("暂无编排任务。");
+            return;
+        }
+        out.println("编排任务 (" + views.size() + " 个):");
+        for (AgentTaskView view : views) {
+            out.println("  " + view.summaryLine());
+        }
+    }
+
+    /**
+     * 懒加载会话级执行器：只有真正用过 {@code /team} 的会话才创建线程池。
+     *
+     * <p>池尺寸取自 {@link #orchestrationConfig}，与 worker 池尺寸对齐，
+     * 保证「排队等线程」与「排队等 worker」不会同时成为瓶颈。
+     */
+    private AgentTaskExecutor taskExecutor() {
+        if (taskExecutor == null) {
+            taskExecutor = new AgentTaskExecutor(orchestrationConfig.maxParallel());
+        }
+        return taskExecutor;
+    }
+
+    /**
+     * 关停会话级编排执行器（幂等）。
+     *
+     * <p>正常路径由 {@link #run} 的 {@code finally} 调用；单测直接驱动 {@code handleCommand}
+     * 时绕过了 {@code run}，需要显式收尾，否则空闲池线程会一直挂在 JVM 里干扰线程泄漏断言。
+     */
+    void closeTaskExecutor() {
+        if (taskExecutor != null) {
+            taskExecutor.close();
+            taskExecutor = null;
+        }
+    }
+
+    private static String describeError(Throwable e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
+    }
+
     private HitlHandler getHitlHandler() {
         if (agent.getToolRegistry() instanceof HitlToolRegistry hitlRegistry) {
             return hitlRegistry.getHitlHandler();
@@ -610,6 +770,9 @@ public class InteractiveSession {
         out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
         out.println("  /plan <目标>         先规划再分步执行复杂任务");
         out.println("  /plan resume         恢复最近一个未完成的 plan 并续跑");
+        out.println("  /team <目标>         多 Agent 并行协作完成目标并复核结果");
+        out.println("  /tasks               查看编排任务状态");
+        out.println("  /cancel [任务ID]     取消全部 / 指定编排任务");
         out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
         out.println("  /audit [数量]        查看最近的 LLM 调用与审批审计记录");
         out.println("  /skill [list]        列出已加载 skill 与启用状态");
