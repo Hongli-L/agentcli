@@ -16,10 +16,12 @@ public class MemoryManager {
     private final LongTermMemory longTermMemory;
     private final MemoryRetriever retriever;
     private TokenBudget tokenBudget;
+    private LlmClient llmClient;
     private String currentProject = LongTermMemory.normalizeProjectKey(System.getProperty("user.dir"));
 
     public MemoryManager(LlmClient llmClient) {
         this(new LongTermMemory(), TokenBudget.forLlmClient(llmClient));
+        this.llmClient = llmClient;
     }
 
     public MemoryManager(LongTermMemory longTermMemory, TokenBudget tokenBudget) {
@@ -29,6 +31,7 @@ public class MemoryManager {
     }
 
     public void setLlmClient(LlmClient llmClient) {
+        this.llmClient = llmClient;
         this.tokenBudget = TokenBudget.forLlmClient(llmClient);
     }
 
@@ -94,6 +97,14 @@ public class MemoryManager {
 
     public LongTermMemory getLongTermMemory() {
         return longTermMemory;
+    }
+
+    public MemoryRetriever getRetriever() {
+        return retriever;
+    }
+
+    public String getCurrentProjectKey() {
+        return currentProject;
     }
 
     public String getSystemStatus() {

@@ -1,6 +1,8 @@
 package com.agentcli.agent;
 
 import com.agentcli.context.ContextProfile;
+import com.agentcli.prompt.ApprovalMode;
+import com.agentcli.prompt.PromptMode;
 import com.agentcli.tool.ToolRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -150,5 +152,68 @@ class SystemPromptTest {
     void nullRegistryDoesNotThrow() {
         String prompt = SystemPrompt.forAgent(null, "");
         assertTrue(prompt.contains("Project root: ."), prompt);
+    }
+
+    @Test
+    void defaultModeKeepsCoreAndOmitsOtherModes(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.DEFAULT, ApprovalMode.SUGGEST);
+        assertTrue(prompt.contains("You are AgentCLI"), prompt);
+        assertTrue(prompt.contains("工作模式：ReAct Agent"), prompt);
+        assertTrue(prompt.contains("审批策略：建议确认"), prompt);
+        // 默认模式不应泄漏 plan / review 专属片段
+        assertFalse(prompt.contains("Plan-and-Execute"), prompt);
+        assertFalse(prompt.contains("工作模式：Reviewer"), prompt);
+    }
+
+    @Test
+    void planModeSegmentIsInjected(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.PLAN, ApprovalMode.SUGGEST);
+        assertTrue(prompt.contains("工作模式：Plan-and-Execute"), prompt);
+        assertFalse(prompt.contains("工作模式：ReAct Agent"), prompt);
+    }
+
+    @Test
+    void reviewModeSegmentIsInjected(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.REVIEW, ApprovalMode.SUGGEST);
+        assertTrue(prompt.contains("工作模式：Reviewer"), prompt);
+    }
+
+    @Test
+    void autoApprovalSegmentIsInjected(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.DEFAULT, ApprovalMode.AUTO);
+        assertTrue(prompt.contains("审批策略：自动执行"), prompt);
+        assertFalse(prompt.contains("审批策略：建议确认"), prompt);
+    }
+
+    @Test
+    void neverApprovalSegmentIsInjected(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.DEFAULT, ApprovalMode.NEVER);
+        assertTrue(prompt.contains("审批策略：保守优先"), prompt);
+    }
+
+    @Test
+    void unknownModeAndApprovalFallBackToDefaults(@TempDir Path projectRoot) {
+        String prompt = SystemPrompt.forAgent(new ToolRegistry(projectRoot.toString()), "",
+                profile(projectRoot.toString()), PromptMode.from("bogus"), ApprovalMode.from("weird"));
+        assertTrue(prompt.contains("工作模式：ReAct Agent"), prompt);
+        assertTrue(prompt.contains("审批策略：建议确认"), prompt);
+    }
+
+    @Test
+    void stablePrefixUnaffectedByMemoryContextForCache(@TempDir Path projectRoot) {
+        // 缓存友好布局：mode/approval 等稳定片段排在前，记忆段（每轮变化）排最后。
+        // 因此相同 mode/approval 下，带记忆与不带记忆的提示词应共享同一前缀。
+        ToolRegistry registry = new ToolRegistry(projectRoot.toString());
+        ContextProfile p = profile(projectRoot.toString());
+        String withoutMemory = SystemPrompt.forAgent(registry, "", p, PromptMode.PLAN, ApprovalMode.NEVER);
+        String withMemory = SystemPrompt.forAgent(registry, "REMEMBERED FACT: prefers Java 17", p,
+                PromptMode.PLAN, ApprovalMode.NEVER);
+        assertTrue(withMemory.startsWith(withoutMemory), "memory 段应仅追加在末尾，稳定前缀必须一致");
+        assertTrue(withMemory.endsWith("REMEMBERED FACT: prefers Java 17"), withMemory);
     }
 }

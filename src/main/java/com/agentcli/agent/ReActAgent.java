@@ -5,11 +5,13 @@ import com.agentcli.agent.concurrent.CancellationScope;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.context.ContextProfile;
-import com.agentcli.memory.ConversationHistoryCompactor;
+import com.agentcli.memory.HybridMemoryCompressor;
 import com.agentcli.skill.SkillIndexFormatter;
 import com.agentcli.skill.SkillRegistry;
 import com.agentcli.memory.MemoryManager;
 import com.agentcli.memory.TokenBudget;
+import com.agentcli.prompt.ApprovalMode;
+import com.agentcli.prompt.PromptMode;
 import com.agentcli.tool.ToolExecutionResult;
 import com.agentcli.tool.ToolInvocation;
 import com.agentcli.tool.ToolRegistry;
@@ -40,11 +42,14 @@ public class ReActAgent {
     private LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final MemoryManager memoryManager;
-    private final ConversationHistoryCompactor historyCompactor;
+    private final HybridMemoryCompressor hybridCompactor;
+    private String lastUserQuery;
     private final List<LlmClient.Message> conversationHistory = new ArrayList<>();
     private AgentRunListener listener = AgentRunListener.NO_OP;
     private SkillRegistry skillRegistry;
     private LspContextInjector lspInjector;
+    private PromptMode promptMode = PromptMode.DEFAULT;
+    private ApprovalMode approvalMode = ApprovalMode.SUGGEST;
 
     public ReActAgent(LlmClient llmClient) {
         this(llmClient, new ToolRegistry());
@@ -54,7 +59,7 @@ public class ReActAgent {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
         this.memoryManager = new MemoryManager(llmClient);
-        this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+        this.hybridCompactor = new HybridMemoryCompressor(llmClient, memoryManager.getRetriever());
         this.memoryManager.setProjectPath(toolRegistry.getProjectPath());
         this.toolRegistry.register(new SaveMemoryTool(memoryManager));
         resetHistory();
@@ -63,7 +68,7 @@ public class ReActAgent {
     public void setLlmClient(LlmClient llmClient) {
         this.llmClient = llmClient;
         memoryManager.setLlmClient(llmClient);
-        historyCompactor.setLlmClient(llmClient);
+        hybridCompactor.setLlmClient(llmClient);
     }
 
     public void setListener(AgentRunListener listener) {
@@ -80,6 +85,29 @@ public class ReActAgent {
      */
     public void setLspInjector(LspContextInjector injector) {
         this.lspInjector = injector;
+    }
+
+    /**
+     * 设置系统提示词的<b>行为模式</b>维度（default/plan/review）。该维度稳定于一次会话内，
+     * 位于 Prompt Cache 前缀中段；调用后下一次 {@link #run} 起的系统提示即生效。
+     */
+    public void setPromptMode(PromptMode promptMode) {
+        this.promptMode = promptMode == null ? PromptMode.DEFAULT : promptMode;
+    }
+
+    public PromptMode getPromptMode() {
+        return promptMode;
+    }
+
+    /**
+     * 设置系统提示词的<b>审批策略</b>维度（suggest/auto/never）。与 {@link #setPromptMode} 对称。
+     */
+    public void setApprovalMode(ApprovalMode approvalMode) {
+        this.approvalMode = approvalMode == null ? ApprovalMode.SUGGEST : approvalMode;
+    }
+
+    public ApprovalMode getApprovalMode() {
+        return approvalMode;
     }
 
     public ToolRegistry getToolRegistry() {
@@ -101,7 +129,7 @@ public class ReActAgent {
     public CompactionResult compactHistoryNow() {
         int beforeTokens = TokenBudget.estimateMessagesTokens(conversationHistory);
         try {
-            boolean compacted = historyCompactor.compactNow(conversationHistory);
+            boolean compacted = hybridCompactor.compactNow(conversationHistory, lastUserQuery, memoryManager.getCurrentProjectKey());
             int afterTokens = TokenBudget.estimateMessagesTokens(conversationHistory);
             return new CompactionResult(compacted, beforeTokens, afterTokens, null);
         } catch (Exception e) {
@@ -114,6 +142,7 @@ public class ReActAgent {
             return "";
         }
         log.info("ReAct run started: inputLength={}", userInput.length());
+        this.lastUserQuery = userInput;
         memoryManager.setProjectPath(toolRegistry.getProjectPath());
         updateSystemPrompt(userInput);
         conversationHistory.add(LlmClient.Message.user(userInput));
@@ -223,7 +252,8 @@ public class ReActAgent {
     private String buildSystemPrompt(String memoryContext) {
         // 只为模板变量（tool_count/model_name）采集画像；token 等高频字段不会进入系统提示，避免击穿 prompt cache。
         ContextProfile profile = ContextProfile.capture(llmClient, toolRegistry, null, memoryManager);
-        StringBuilder prompt = new StringBuilder(SystemPrompt.forAgent(toolRegistry, memoryContext, profile));
+        StringBuilder prompt = new StringBuilder(
+                SystemPrompt.forAgent(toolRegistry, memoryContext, profile, promptMode, approvalMode));
         if (skillRegistry != null) {
             String index = SkillIndexFormatter.format(skillRegistry.enabledSkills());
             if (!index.isBlank()) {
@@ -236,7 +266,7 @@ public class ReActAgent {
     private void maybeCompactHistory() {
         try {
             int trigger = memoryManager.getTokenBudget().compressionTriggerTokens();
-            if (historyCompactor.compactIfNeeded(conversationHistory, trigger)) {
+            if (hybridCompactor.compactIfNeeded(conversationHistory, trigger, lastUserQuery, memoryManager.getCurrentProjectKey())) {
                 log.info("Conversation history compacted before LLM call");
             }
         } catch (Exception e) {

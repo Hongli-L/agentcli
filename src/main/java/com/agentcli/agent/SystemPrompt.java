@@ -1,6 +1,8 @@
 package com.agentcli.agent;
 
 import com.agentcli.context.ContextProfile;
+import com.agentcli.prompt.ApprovalMode;
+import com.agentcli.prompt.PromptMode;
 import com.agentcli.prompt.PromptTemplateLoader;
 import com.agentcli.prompt.PromptTemplateRenderer;
 import com.agentcli.tool.ToolRegistry;
@@ -12,11 +14,23 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Agent 系统提示词构建。
+ * Agent 系统提示词构建（分层组装）。
  *
  * <p>v0.16.0 起提示词正文外置到 classpath {@code prompts/*.md} 模板，便于调整措辞而不改代码。
- * 但模板是"锦上添花"而非"生死攸关"：任一模板缺失或读取失败，都会整体降级回
+ * 但模板是"锦上添花"而非"生死攸关"：任一必需模板缺失或读取失败，都会整体降级回
  * {@link #legacyPrompt} 的硬编码文本，行为与 v0.15.0 完全一致，绝不因为打包问题让 CLI 不可用。
+ *
+ * <p><b>v0.21.0 分层组装</b>：提示词按「维度 → 片段」拼装，并遵循<b>低频稳定字段排前、
+ * 高频变化字段排后</b>的原则以最大化上游 Prompt Cache 的前缀命中率：
+ * <pre>
+ *   ① role（角色身份 + 项目根）      —— 稳定（仅随项目根变化，基本每会话不变）
+ *   ② tools（工具数 + 模型 + 准则）   —— 稳定（仅随工具注册 / 模型变化，每会话不变）
+ *   ③ mode（default/plan/review）     —— 稳定（每会话不变，属缓存前缀中段）
+ *   ④ approval（suggest/auto/never）  —— 稳定（每会话不变，属缓存前缀中段）
+ *   ⑤ memory（长期记忆注入）          —— 动态（随每轮查询变化，排在最后）
+ * </pre>
+ * ①② 之外，③④ 也落在前缀中段，因此只要 mode/approval 不变，多轮对话共享同一稳定前缀；
+ * 唯一每轮变动的是 ⑤（由 {@code ReActAgent} 在 ⑤ 之后再追加 skill 索引，同样在最尾部）。
  *
  * <p>注入原则：只放<b>低频稳定</b>字段（项目路径、工具数、模型名），
  * 不放 token 用量这类每轮都变的数值，否则会持续击穿上游的 prompt cache。
@@ -50,31 +64,54 @@ public final class SystemPrompt {
     }
 
     /**
-     * 构建系统提示词。
+     * 构建系统提示词（默认 mode=DEFAULT、approval=SUGGEST）。
      *
      * @param registry      工具注册表，用于取项目路径与工具数（可为 null）
      * @param memoryContext 记忆上下文，空白则整个记忆段丢弃
      * @param profile       上下文画像，可为 null；为 null 时退化为仅从 registry 取变量
      */
     public static String forAgent(ToolRegistry registry, String memoryContext, ContextProfile profile) {
+        return forAgent(registry, memoryContext, profile, PromptMode.DEFAULT, ApprovalMode.SUGGEST);
+    }
+
+    /**
+     * 构建系统提示词（分层组装全参数版）。
+     *
+     * @param registry      工具注册表（可为 null）
+     * @param memoryContext 记忆上下文，空白则整个记忆段丢弃
+     * @param profile       上下文画像（可为 null）
+     * @param mode          行为模式维度（null 视为 {@link PromptMode#DEFAULT}）
+     * @param approvalMode  审批策略维度（null 视为 {@link ApprovalMode#SUGGEST}）
+     */
+    public static String forAgent(ToolRegistry registry, String memoryContext, ContextProfile profile,
+                                  PromptMode mode, ApprovalMode approvalMode) {
+        PromptMode m = mode == null ? PromptMode.DEFAULT : mode;
+        ApprovalMode a = approvalMode == null ? ApprovalMode.SUGGEST : approvalMode;
         String projectPath = resolveProjectPath(registry, profile);
 
         String roleTemplate = loadTemplate(ROLE_TEMPLATE);
         String toolsTemplate = loadTemplate(TOOLS_TEMPLATE);
+        String modeTemplate = loadTemplate(m.resourcePath());
+        String approvalTemplate = loadTemplate(a.resourcePath());
         String memoryTemplate = loadTemplate(MEMORY_TEMPLATE);
-        if (roleTemplate == null || toolsTemplate == null || memoryTemplate == null) {
+        // 任一必需模板缺失 → 整体降级到 v0.15.0 硬编码文本，保证 CLI 永远可用。
+        if (roleTemplate == null || toolsTemplate == null || modeTemplate == null
+                || approvalTemplate == null || memoryTemplate == null) {
             return legacyPrompt(projectPath, memoryContext);
         }
 
         Map<String, String> vars = buildVariables(registry, profile, projectPath);
 
-        List<String> segments = new ArrayList<>(3);
-        addSegment(segments, renderTemplate(roleTemplate, vars));
-        addSegment(segments, renderTemplate(toolsTemplate, vars));
+        // 组装顺序即缓存布局：稳定字段（①②③④）在前，动态字段（⑤）在最后。
+        List<String> segments = new ArrayList<>(5);
+        addSegment(segments, renderTemplate(roleTemplate, vars));        // ① 稳定
+        addSegment(segments, renderTemplate(toolsTemplate, vars));       // ② 稳定
+        addSegment(segments, renderTemplate(modeTemplate, vars));        // ③ 稳定（每会话）
+        addSegment(segments, renderTemplate(approvalTemplate, vars));    // ④ 稳定（每会话）
         if (memoryContext != null && !memoryContext.isBlank()) {
             Map<String, String> memoryVars = new LinkedHashMap<>(vars);
             memoryVars.put(VAR_MEMORY_CONTEXT, memoryContext.trim());
-            addSegment(segments, renderTemplate(memoryTemplate, memoryVars));
+            addSegment(segments, renderTemplate(memoryTemplate, memoryVars)); // ⑤ 动态（每轮）
         }
         return String.join("\n\n", segments).trim();
     }
