@@ -1,6 +1,7 @@
 package com.agentcli.hitl;
 
 import com.agentcli.audit.AuditLog;
+import com.agentcli.common.SandboxPolicy;
 import com.agentcli.tool.ToolRegistry;
 
 /**
@@ -27,11 +28,11 @@ public class HitlToolRegistry extends ToolRegistry {
     private final AuditLog auditLog;
 
     public HitlToolRegistry(HitlHandler hitlHandler) {
-        this(hitlHandler, null);
+        this(hitlHandler, SandboxPolicy.legacy());
     }
 
     public HitlToolRegistry(String projectPath, HitlHandler hitlHandler) {
-        this(projectPath, hitlHandler, null);
+        this(projectPath, hitlHandler, SandboxPolicy.legacy());
     }
 
     public HitlToolRegistry(HitlHandler hitlHandler, AuditLog auditLog) {
@@ -42,6 +43,30 @@ public class HitlToolRegistry extends ToolRegistry {
 
     public HitlToolRegistry(String projectPath, HitlHandler hitlHandler, AuditLog auditLog) {
         super(projectPath);
+        this.hitlHandler = hitlHandler;
+        this.auditLog = auditLog;
+    }
+
+    /** 使用指定沙箱策略（v0.22.0）：生产入口传 {@link SandboxPolicy#secure()}。 */
+    public HitlToolRegistry(HitlHandler hitlHandler, SandboxPolicy sandboxPolicy) {
+        this(hitlHandler, sandboxPolicy, null);
+    }
+
+    /** 使用指定沙箱策略（v0.22.0）：生产入口传 {@link SandboxPolicy#secure()}。 */
+    public HitlToolRegistry(String projectPath, HitlHandler hitlHandler, SandboxPolicy sandboxPolicy) {
+        this(projectPath, hitlHandler, sandboxPolicy, null);
+    }
+
+    /** 使用指定沙箱策略（v0.22.0）：生产入口传 {@link SandboxPolicy#secure()}。 */
+    public HitlToolRegistry(HitlHandler hitlHandler, SandboxPolicy sandboxPolicy, AuditLog auditLog) {
+        super(System.getProperty("user.dir"), sandboxPolicy);
+        this.hitlHandler = hitlHandler;
+        this.auditLog = auditLog;
+    }
+
+    /** 使用指定沙箱策略（v0.22.0）：生产入口传 {@link SandboxPolicy#secure()}。 */
+    public HitlToolRegistry(String projectPath, HitlHandler hitlHandler, SandboxPolicy sandboxPolicy, AuditLog auditLog) {
+        super(projectPath, sandboxPolicy);
         this.hitlHandler = hitlHandler;
         this.auditLog = auditLog;
     }

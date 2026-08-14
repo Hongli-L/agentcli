@@ -3,6 +3,8 @@ package com.agentcli.agent;
 import com.agentcli.agent.concurrent.AgentTaskExecutor;
 import com.agentcli.agent.concurrent.CancellationScope;
 import com.agentcli.llm.LlmClient;
+import com.agentcli.common.SandboxPolicy;
+import com.agentcli.common.ToolCallQuota;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.context.ContextProfile;
 import com.agentcli.memory.HybridMemoryCompressor;
@@ -286,7 +288,35 @@ public class ReActAgent {
         if (invocations.size() > 1) {
             log.info("Executing {} tool calls in parallel", invocations.size());
         }
-        return toolRegistry.executeTools(invocations);
+        // 单轮工具调用配额：防止一次 LLM 响应扇出过量调用（资源耗尽 / runaway）。
+        SandboxPolicy policy = toolRegistry.sandboxPolicy();
+        ToolCallQuota quota = policy.newQuota();
+        List<ToolInvocation> allowed = new ArrayList<>(invocations.size());
+        for (ToolInvocation invocation : invocations) {
+            if (quota.tryConsume()) {
+                allowed.add(invocation);
+            }
+        }
+        List<ToolExecutionResult> allowedResults = allowed.isEmpty()
+                ? List.of()
+                : toolRegistry.executeTools(allowed);
+        int ai = 0;
+        List<ToolExecutionResult> results = new ArrayList<>(invocations.size());
+        for (ToolInvocation invocation : invocations) {
+            if (allowed.contains(invocation)) {
+                results.add(allowedResults.get(ai++));
+            } else {
+                results.add(new ToolExecutionResult(
+                        invocation.id(),
+                        invocation.name(),
+                        invocation.argumentsJson(),
+                        "🛡️ 单轮工具调用超过上限 " + quota.max()
+                                + "，已忽略此调用（请拆成多轮分步执行）",
+                        0,
+                        false));
+            }
+        }
+        return results;
     }
 
     private void resetHistory() {

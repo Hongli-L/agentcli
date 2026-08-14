@@ -3,6 +3,7 @@ package com.agentcli.tool;
 import com.agentcli.agent.concurrent.CancellationScope;
 import com.agentcli.agent.concurrent.CancellationToken;
 import com.agentcli.common.PolicyException;
+import com.agentcli.common.SandboxPolicy;
 import com.agentcli.common.UserFacingErrors;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.tool.builtin.CreateProjectTool;
@@ -54,6 +55,7 @@ public class ToolRegistry {
 
     private final Map<String, Tool> tools = Collections.synchronizedMap(new LinkedHashMap<>());
     private final ToolContext context;
+    private final SandboxPolicy sandboxPolicy;
     private final long toolBatchTimeoutSeconds;
 
     public ToolRegistry() {
@@ -61,13 +63,27 @@ public class ToolRegistry {
     }
 
     public ToolRegistry(String projectPath) {
-        this(projectPath, DEFAULT_TOOL_BATCH_TIMEOUT_SECONDS);
+        this(projectPath, SandboxPolicy.legacy());
+    }
+
+    public ToolRegistry(String projectPath, SandboxPolicy sandboxPolicy) {
+        this(projectPath, sandboxPolicy, DEFAULT_TOOL_BATCH_TIMEOUT_SECONDS);
     }
 
     ToolRegistry(String projectPath, long toolBatchTimeoutSeconds) {
-        this.context = new ToolContext(projectPath);
+        this(projectPath, SandboxPolicy.legacy(), toolBatchTimeoutSeconds);
+    }
+
+    ToolRegistry(String projectPath, SandboxPolicy sandboxPolicy, long toolBatchTimeoutSeconds) {
+        this.sandboxPolicy = sandboxPolicy == null ? SandboxPolicy.legacy() : sandboxPolicy;
+        this.context = new ToolContext(projectPath, this.sandboxPolicy);
         this.toolBatchTimeoutSeconds = toolBatchTimeoutSeconds;
         registerBuiltinTools();
+    }
+
+    /** 当前生效的沙箱策略（命令 deny-by-default / 单轮配额 / 写确认 / 受保护目录）。 */
+    public SandboxPolicy sandboxPolicy() {
+        return sandboxPolicy;
     }
 
     private void registerBuiltinTools() {

@@ -5,6 +5,7 @@ import com.agentcli.audit.AuditLog;
 import com.agentcli.audit.AuditLlmClient;
 import com.agentcli.audit.OrchestrationTrace;
 import com.agentcli.common.AppConfig;
+import com.agentcli.common.SandboxPolicy;
 import com.agentcli.hitl.HitlToolRegistry;
 import com.agentcli.hitl.TerminalHitlHandler;
 import com.agentcli.llm.LlmClient;
@@ -104,8 +105,8 @@ public final class Launcher {
         skillRegistry.reload();
 
         ToolRegistry toolRegistry = auditLog != null
-                ? new HitlToolRegistry(projectPath, hitlHandler, auditLog)
-                : new HitlToolRegistry(projectPath, hitlHandler);
+                ? new HitlToolRegistry(projectPath, hitlHandler, SandboxPolicy.secure(), auditLog)
+                : new HitlToolRegistry(projectPath, hitlHandler, SandboxPolicy.secure());
         toolRegistry.register(new LoadSkillTool(skillRegistry));
         ReActAgent agent = new ReActAgent(client, toolRegistry);
         agent.setSkillRegistry(skillRegistry);

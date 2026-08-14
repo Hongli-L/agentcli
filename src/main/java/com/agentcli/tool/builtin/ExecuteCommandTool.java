@@ -1,7 +1,7 @@
 package com.agentcli.tool.builtin;
 
-import com.agentcli.common.CommandGuard;
 import com.agentcli.common.PolicyException;
+import com.agentcli.common.SandboxPolicy;
 import com.agentcli.tool.AbstractTool;
 import com.agentcli.tool.ToolContext;
 import com.agentcli.tool.ToolSchema;
@@ -47,7 +47,7 @@ public class ExecuteCommandTool extends AbstractTool {
         if (normalized.isEmpty()) {
             return "执行命令失败: 命令不能为空";
         }
-        String denyReason = CommandGuard.check(normalized);
+        String denyReason = context.sandboxPolicy().checkCommand(normalized);
         if (denyReason != null) {
             // 抛 PolicyException 让外层 ToolRegistry 统一格式化拒绝消息，
             // 命令围栏与路径围栏的拒绝路径走同一个出口。

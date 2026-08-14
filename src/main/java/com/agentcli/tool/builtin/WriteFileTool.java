@@ -25,10 +25,12 @@ public class WriteFileTool extends AbstractTool {
     public WriteFileTool(ToolContext context) {
         super(
                 "write_file",
-                "写入文件内容（仅限项目根目录之内，单文件 5MB 上限）",
+                "写入文件内容（仅限项目根目录之内，单文件 5MB 上限，覆盖现有文件需 confirm=true）",
                 ToolSchema.object(
                         ToolSchema.required("path", "string", "文件路径"),
-                        ToolSchema.required("content", "string", "文件内容")
+                        ToolSchema.required("content", "string", "文件内容"),
+                        ToolSchema.optional("confirm", "string",
+                                "覆盖现有文件时的二次确认开关，传 \"true\" 或 \"yes\" 才允许覆盖")
                 ));
         this.context = context;
     }
@@ -43,6 +45,18 @@ public class WriteFileTool extends AbstractTool {
                     + (MAX_WRITE_FILE_BYTES / 1024 / 1024) + "MB 上限");
         }
         Path safe = context.pathGuard().resolveSafe(path);
+        if (context.sandboxPolicy().isWriteProtected(safe)) {
+            throw new PolicyException("禁止写入受保护目录: " + path
+                    + "（沙箱策略禁止修改受保护子目录，如 .git）");
+        }
+        if (Files.exists(safe) && context.sandboxPolicy().requireWriteConfirmation()) {
+            String confirm = args.get("confirm");
+            boolean acknowledged = "true".equalsIgnoreCase(confirm) || "yes".equalsIgnoreCase(confirm);
+            if (!acknowledged) {
+                throw new PolicyException("写操作需二次确认：将覆盖现有文件 " + path
+                        + "，请显式传入 confirm=true 以确认覆盖");
+            }
+        }
         try {
             Path parent = safe.getParent();
             if (parent != null) {
