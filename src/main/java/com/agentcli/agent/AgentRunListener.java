@@ -25,4 +25,11 @@ public interface AgentRunListener extends LlmClient.StreamListener {
 
     default void onToolResult(ToolExecutionResult result) {
     }
+
+    /**
+     * 单轮运行收尾时回调：本回合的 token 消耗与墙钟耗时。
+     * 默认空实现，渲染层可据此打印一行小结。
+     */
+    default void onTurnSummary(TurnUsage usage) {
+    }
 }

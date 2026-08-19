@@ -56,6 +56,28 @@ public final class TokenUsageFormatter {
     }
 
     /**
+     * 渲染单轮回合的小结（紧凑单行，供每轮结束即时展示）。
+     *
+     * <p>与 {@link #format} 的多行 {@code /usage} 报表不同，这里只给一行：
+     * 本回合输入/输出/缓存 token、估算费用、耗时，便于用户每次提问后立刻看到代价。
+     */
+    public static String formatPerTurn(String provider, String model,
+                                        int inputTokens, int outputTokens, int cachedInputTokens,
+                                        long elapsedMillis) {
+        double cost = estimatedCostCny(provider, inputTokens, outputTokens, cachedInputTokens);
+        double seconds = elapsedMillis / 1000.0;
+        return AnsiStyle.subtle("📊 本回合 ")
+                + "输入 " + formatNumber(Math.max(0, inputTokens))
+                + " / 输出 " + formatNumber(Math.max(0, outputTokens))
+                + " / 缓存 " + formatNumber(Math.max(0, cachedInputTokens))
+                + AnsiStyle.subtle("　估算 ")
+                + AnsiStyle.emphasis(String.format(Locale.ROOT, "¥%.4f", cost))
+                + AnsiStyle.subtle("　⏱ ")
+                + String.format(Locale.ROOT, "%.2f", seconds) + "s"
+                + AnsiStyle.subtle("　(" + (provider == null ? "?" : provider) + "/" + (model == null ? "?" : model) + ")");
+    }
+
+    /**
      * 估算本次会话花费（人民币元）。
      *
      * <p>缓存命中的输入 token 按低价档单独计费，因此普通输入部分要把 cached 扣掉；

@@ -139,12 +139,28 @@ public class ReActAgent {
         }
     }
 
+    /**
+     * 构造本回合用量小结并交给监听器渲染（v0.26 每轮成本展示）。
+     * 在 {@link #run} 的每一个返回点之前调用，保证无论正常收尾还是取消/兜底退出都给出代价反馈。
+     */
+    private void emitTurnSummary(AgentBudget budget, long startNanos) {
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+        listener.onTurnSummary(new TurnUsage(
+                llmClient.getProviderName(),
+                llmClient.getModelName(),
+                budget.totalInputTokens(),
+                budget.totalOutputTokens(),
+                budget.totalCachedInputTokens(),
+                elapsedMillis));
+    }
+
     public String run(String userInput) {
         if (userInput == null || userInput.isBlank()) {
             return "";
         }
         log.info("ReAct run started: inputLength={}", userInput.length());
         this.lastUserQuery = userInput;
+        long startNanos = System.nanoTime();
         memoryManager.setProjectPath(toolRegistry.getProjectPath());
         updateSystemPrompt(userInput);
         conversationHistory.add(LlmClient.Message.user(userInput));
@@ -156,6 +172,7 @@ public class ReActAgent {
             // 直接返回不会留下半截的 tool_call 悬空在历史里。
             if (CancellationScope.isCancelled()) {
                 log.info("ReAct run cancelled at iteration boundary: iteration={}", budget.iteration());
+                emitTurnSummary(budget, startNanos);
                 return AgentTaskExecutor.CANCELLED_RESULT;
             }
 
@@ -163,6 +180,7 @@ public class ReActAgent {
             if (exitReason != AgentBudget.ExitReason.WITHIN_BUDGET) {
                 String message = UserFacingErrors.fail(budget.describeExit(exitReason));
                 log.warn("ReAct run stopped: {}", message);
+                emitTurnSummary(budget, startNanos);
                 return message;
             }
 
@@ -202,6 +220,7 @@ public class ReActAgent {
                     // 这类有副作用的操作，已取消就绝不能再放出去。
                     if (CancellationScope.isCancelled()) {
                         log.info("ReAct run cancelled before tool batch: iteration={}", iteration);
+                        emitTurnSummary(budget, startNanos);
                         return AgentTaskExecutor.CANCELLED_RESULT;
                     }
 
@@ -231,6 +250,7 @@ public class ReActAgent {
                 );
                 log.info("ReAct run finished: iterations={}, inputTokens={}, outputTokens={}",
                         budget.iteration(), budget.totalInputTokens(), budget.totalOutputTokens());
+                emitTurnSummary(budget, startNanos);
                 return answer;
 
             } catch (IOException e) {
@@ -238,6 +258,7 @@ public class ReActAgent {
                 // 不能报成 "LLM 调用失败" 污染用户视野。
                 if (CancellationScope.isCancelled()) {
                     log.info("ReAct run cancelled during LLM call: iteration={}", iteration);
+                    emitTurnSummary(budget, startNanos);
                     return AgentTaskExecutor.CANCELLED_RESULT;
                 }
                 log.error("LLM call failed in ReAct loop", e);

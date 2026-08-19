@@ -1,8 +1,10 @@
 package com.agentcli.cli;
 
 import com.agentcli.agent.AgentRunListener;
+import com.agentcli.agent.TurnUsage;
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.TerminalMarkdownRenderer;
+import com.agentcli.context.TokenUsageFormatter;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.tool.ToolExecutionResult;
 
@@ -23,6 +25,7 @@ public class StreamingConsoleListener implements AgentRunListener {
     private final TerminalMarkdownRenderer markdownRenderer;
     private boolean reasoningOpen;
     private boolean contentStreamed;
+    private TurnUsage lastTurnUsage;
 
     public StreamingConsoleListener(PrintStream out) {
         this.out = out == null ? System.out : out;
@@ -49,6 +52,18 @@ public class StreamingConsoleListener implements AgentRunListener {
         contentStreamed = false;
         out.print("\u001B[0m");
         out.flush();
+        // 每轮成本/耗时小结（v0.26）：本回合结束时打印在回答下方，不跨回合串味。
+        if (lastTurnUsage != null) {
+            out.println(TokenUsageFormatter.formatPerTurn(
+                    lastTurnUsage.provider(),
+                    lastTurnUsage.model(),
+                    lastTurnUsage.inputTokens(),
+                    lastTurnUsage.outputTokens(),
+                    lastTurnUsage.cachedInputTokens(),
+                    lastTurnUsage.elapsedMillis()));
+            out.flush();
+            lastTurnUsage = null;
+        }
     }
 
     @Override
@@ -110,6 +125,11 @@ public class StreamingConsoleListener implements AgentRunListener {
             return;
         }
         out.println(AnsiStyle.subtle("  ok " + result.name() + " (" + result.elapsedMillis() + "ms)"));
+    }
+
+    @Override
+    public void onTurnSummary(TurnUsage usage) {
+        this.lastTurnUsage = usage;
     }
 
     private void closeReasoning() {

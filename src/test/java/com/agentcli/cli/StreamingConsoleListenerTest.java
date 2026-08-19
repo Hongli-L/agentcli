@@ -1,5 +1,6 @@
 package com.agentcli.cli;
 
+import com.agentcli.agent.TurnUsage;
 import com.agentcli.llm.LlmClient;
 import com.agentcli.tool.ToolExecutionResult;
 import org.junit.jupiter.api.Test;
@@ -43,5 +44,34 @@ class StreamingConsoleListenerTest {
 
         String out = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(out.indexOf("Thinking") < out.indexOf("answer"));
+    }
+
+    @Test
+    void onTurnSummaryPrintsBelowAnswerAtFinish() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        StreamingConsoleListener listener = new StreamingConsoleListener(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+
+        listener.onContentDelta("the answer");
+        listener.onTurnSummary(new TurnUsage("glm", "glm-4", 100, 50, 0, 800));
+        listener.finishTurn();
+
+        String out = buffer.toString(StandardCharsets.UTF_8);
+        assertTrue(out.contains("本回合"), out);
+        assertTrue(out.contains("100"), out);
+        assertTrue(out.contains("⏱"), out);
+        // 小结必须出现在回答正文之后，而不是穿插在流式输出里
+        assertTrue(out.indexOf("the answer") < out.indexOf("本回合"), out);
+    }
+
+    @Test
+    void turnSummaryOmittedWithoutOnTurnSummaryCall() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        StreamingConsoleListener listener = new StreamingConsoleListener(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+
+        listener.onContentDelta("plain answer");
+        listener.finishTurn();
+
+        String out = buffer.toString(StandardCharsets.UTF_8);
+        assertFalse(out.contains("本回合"), out);
     }
 }

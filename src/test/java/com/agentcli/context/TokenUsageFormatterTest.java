@@ -132,4 +132,28 @@ class TokenUsageFormatterTest {
         assertTrue(text.contains("窗口占用"), text);
         assertTrue(text.contains("120,000"), text);
     }
+
+    @Test
+    void formatPerTurnShowsTokensCostAndTime() {
+        String text = TokenUsageFormatter.formatPerTurn("deepseek", "deepseek-chat",
+                10_000, 2_000, 4_000, 1234);
+        assertTrue(text.contains("10,000"), text);
+        assertTrue(text.contains("2,000"), text);
+        assertTrue(text.contains("4,000"), text);
+        assertTrue(text.contains("估算"), text);
+        assertTrue(text.contains("¥"), text);
+        assertTrue(text.contains("⏱"), text);
+        assertTrue(text.contains("1.23"), text); // 1234ms -> 1.23s
+        assertTrue(text.contains("deepseek"), text);
+    }
+
+    @Test
+    void formatPerTurnHasNoAnsiWhenColorDisabled() {
+        String text = TokenUsageFormatter.formatPerTurn("glm", "glm-4", 100, 100, 0, 500);
+        if (!com.agentcli.common.AnsiStyle.isEnabled()) {
+            assertTrue(text.indexOf('\u001B') < 0, "着色关闭时不应出现 ANSI 转义码: " + text);
+        } else {
+            assertTrue(text.contains("本回合"), text);
+        }
+    }
 }
