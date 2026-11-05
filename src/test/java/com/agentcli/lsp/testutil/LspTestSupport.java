@@ -2,9 +2,11 @@ package com.agentcli.lsp.testutil;
 
 import com.agentcli.lsp.config.LspServerConfig;
 
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,9 +18,45 @@ public final class LspTestSupport {
     private LspTestSupport() {
     }
 
-    /** @return 当前 JVM 的类路径（用于拉起 FakeLanguageServer 子进程） */
+    /**
+     * @return 可供子进程加载 {@link FakeLanguageServer} 及其依赖的类路径。
+     *
+     * <p>不能直接用 {@code java.class.path}：surefire 以 {@code -DforkCount=0} 运行时测试跑在
+     * Maven 自身 JVM 里，该属性是 Maven 启动 classpath（只有 classworlds），FakeLanguageServer
+     * 子进程会 ClassNotFound、LSP 握手超时。这里改用类自身的 CodeSource 定位
+     * test-classes / classes / jackson jar，分叉与非分叉两种模式下都成立；定位失败时回退旧值。
+     */
     public static String classpath() {
+        String fromCodeSource = codeSourcePath(FakeLanguageServer.class)
+                + File.pathSeparatorChar
+                + codeSourcePath(LspServerConfig.class)
+                + File.pathSeparatorChar
+                + codeSourcePath(com.fasterxml.jackson.databind.ObjectMapper.class);
+        if (isUsable(fromCodeSource)) {
+            return fromCodeSource;
+        }
         return System.getProperty("java.class.path");
+    }
+
+    /** @return 该类所在目录或 jar 的绝对路径；定位失败返回空串。 */
+    private static String codeSourcePath(Class<?> type) {
+        try {
+            return Paths.get(type.getProtectionDomain().getCodeSource()
+                            .getLocation().toURI())
+                    .toAbsolutePath().toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** @return 三段路径是否都定位成功（任一为空即不可用）。 */
+    private static boolean isUsable(String classpath) {
+        for (String entry : classpath.split(File.pathSeparator)) {
+            if (entry.isBlank() || !Path.of(entry).toFile().exists()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
