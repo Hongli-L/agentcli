@@ -1,0 +1,315 @@
+%% AgentCLI v0.19.0 联网闭环与检索工具化 — 类图
+%% 架构师：高见远(Gao)  |  硬约束：零新增依赖
+%% 可见性：+ public   - private   # protected   ~ package(测试注入口)
+%% $ 后缀 = static
+classDiagram
+    direction LR
+
+    %% ==================== tool 层（既有骨架，零改动） ====================
+    class Tool {
+        <<interface>>
+        +name() String
+        +description() String
+        +parameters() JsonNode
+        +execute(Map~String,String~ args) String
+    }
+
+    class AbstractTool {
+        <<abstract>>
+        -name String
+        -description String
+        -parameters JsonNode
+        #AbstractTool(String name, String desc, JsonNode params)
+    }
+
+    class ToolRegistry {
+        -tools Map~String,Tool~
+        -context ToolContext
+        -registerBuiltinTools() void
+        +register(Tool tool) void
+        +hasTool(String name) boolean
+        +executeTool(String name, String argsJson) String
+    }
+
+    class ToolContext {
+        +projectPath() Path
+        +pathGuard() PathGuard
+    }
+
+    Tool <|.. AbstractTool
+    AbstractTool <|-- WebFetchTool
+    AbstractTool <|-- RagSearchTool
+    AbstractTool <|-- WebSearchTool
+    AbstractTool <|-- GrepCodeTool
+    ToolRegistry o-- Tool
+    ToolRegistry *-- ToolContext
+
+    %% ==================== 新增工具（tool/builtin） ====================
+    class WebFetchTool {
+        <<新增 工具外壳 无业务逻辑>>
+        -DEFAULT_MAX_CHARS int$
+        -MAX_MAX_CHARS int$
+        -service WebFetchService
+        +WebFetchTool()
+        ~WebFetchTool(WebFetchService service)
+        +execute(Map~String,String~ args) String
+        -service() WebFetchService
+        -render(Outcome outcome) String
+    }
+
+    class RagSearchTool {
+        <<新增 懒装配 构造期不碰SQLite>>
+        -DEFAULT_TOP_K int$
+        -MAX_TOP_K int$
+        -context ToolContext
+        -retriever CodeRetriever
+        -resolved boolean
+        -initFailure String
+        +RagSearchTool(ToolContext context)
+        ~RagSearchTool(ToolContext ctx, CodeRetriever retriever)
+        +execute(Map~String,String~ args) String
+        -retriever() CodeRetriever
+    }
+
+    class WebSearchTool {
+        <<既有 零改动>>
+        +execute(Map~String,String~ args) String
+    }
+
+    class GrepCodeTool {
+        <<既有 仅改description>>
+        +execute(Map~String,String~ args) String
+    }
+
+    %% ==================== web 包：安全围栏与传输 ====================
+    class NetworkPolicy {
+        <<新增 SSRF规则唯一持有者>>
+        -ALLOWED_SCHEMES Set~String~$
+        -BLOCKED_PORTS Set~Integer~$
+        -allowLoopback boolean
+        +NetworkPolicy()
+        ~NetworkPolicy(boolean allowLoopback)
+        +checkUrl(String url) String
+        +resolveAndCheck(String host) List~InetAddress~
+        +lookup(String hostname) List~InetAddress~
+        +isBlockedAddress(InetAddress addr) boolean
+        -checkScheme(String scheme) String
+        -checkPort(int port) String
+        -isPrivateV4(byte[] octets) boolean
+        -isPrivateV6(byte[] octets) boolean
+    }
+
+    class Dns {
+        <<interface okhttp3>>
+        +lookup(String hostname) List~InetAddress~
+    }
+
+    class SsrfBlockedException {
+        <<extends UnknownHostException>>
+        -reason String
+        +reason() String
+    }
+
+    class WebFetcher {
+        <<新增 HTTP传输层 不懂HTML>>
+        -MAX_BYTES int$
+        -MAX_REDIRECTS int$
+        -CONNECT_TIMEOUT_SECONDS long$
+        -READ_TIMEOUT_SECONDS long$
+        -policy NetworkPolicy
+        -httpClient OkHttpClient
+        +WebFetcher()
+        +WebFetcher(NetworkPolicy policy)
+        ~WebFetcher(NetworkPolicy p, OkHttpClient c, int maxBytes)
+        +fetch(String url) FetchResult
+        -buildClient(NetworkPolicy policy) OkHttpClient
+        -readBounded(InputStream in, int limit) byte[]
+        -resolveCharset(Response r, byte[] head) Charset
+        -checkContentType(String contentType) String
+    }
+
+    class FetchResult {
+        <<record 新增>>
+        +requestedUrl String
+        +finalUrl String
+        +statusCode int
+        +contentType String
+        +charset String
+        +body String
+        +byteLength int
+        +truncated boolean
+        +redirectChain List~String~
+        +isHtml() boolean
+    }
+
+    NetworkPolicy ..|> Dns
+    NetworkPolicy ..> SsrfBlockedException
+    WebFetcher *-- NetworkPolicy
+    WebFetcher ..> FetchResult
+
+    %% ==================== web 包：零依赖 HTML 到 Markdown ====================
+    class HtmlTagTokenizer {
+        <<新增 手写状态机 替代Jsoup>>
+        -MAX_TOKENS int$
+        +tokenize(String html) List~Token~
+        -readTagName(char[] src, int pos) String
+        -readAttributes(char[] src, int pos) Map~String,String~
+        -readRawText(char[] src, int pos, String tag) String
+    }
+
+    class Token {
+        <<record 新增>>
+        +kind Kind
+        +name String
+        +attributes Map~String,String~
+        +text String
+    }
+
+    class Kind {
+        <<enumeration>>
+        START_TAG
+        END_TAG
+        SELF_CLOSING
+        TEXT
+        COMMENT
+        DOCTYPE
+    }
+
+    class HtmlExtractionRules {
+        <<新增 纯静态规则表 叶子类>>
+        -NOISE_TAGS Set~String~$
+        -NOISE_CLASS_KEYWORDS Set~String~$
+        -VOID_TAGS Set~String~$
+        -RAW_TEXT_TAGS Set~String~$
+        -BLOCK_TAGS Set~String~$
+        +isNoiseTag(String tag)$ boolean
+        +isNoiseMarker(String classAndId)$ boolean
+        +isVoidTag(String tag)$ boolean
+        +isRawTextTag(String tag)$ boolean
+        +isBlockTag(String tag)$ boolean
+        +headingPrefix(String tag)$ String
+        +scoreContainer(int textLen, int linkLen)$ double
+        +decodeEntities(String raw)$ String
+        +collapseBlankLines(String text)$ String
+    }
+
+    class HtmlToMarkdownExtractor {
+        <<新增 两阶段 定位正文再渲染>>
+        -MAX_DEPTH int$
+        -tokenizer HtmlTagTokenizer
+        +extract(String html, String baseUrl) Extracted
+        -pickTitle(List~Token~ tokens) String
+        -dropNoise(List~Token~ tokens) List~Token~
+        -locateMainRegion(List~Token~ tokens) Region
+        -render(List~Token~ t, Region r, String baseUrl) String
+        -absolutize(String baseUrl, String href) String
+    }
+
+    class Region {
+        <<record 新增>>
+        +start int
+        +end int
+    }
+
+    class Extracted {
+        <<record 新增>>
+        +title String
+        +markdown String
+    }
+
+    HtmlTagTokenizer ..> Token
+    Token *-- Kind
+    HtmlToMarkdownExtractor *-- HtmlTagTokenizer
+    HtmlToMarkdownExtractor ..> HtmlExtractionRules
+    HtmlToMarkdownExtractor ..> Region
+    HtmlToMarkdownExtractor ..> Extracted
+
+    %% ==================== web 包：编排层 ====================
+    class WebFetchService {
+        <<新增 编排 不懂OkHttp>>
+        -fetcher WebFetcher
+        -extractor HtmlToMarkdownExtractor
+        +WebFetchService()
+        ~WebFetchService(WebFetcher f, HtmlToMarkdownExtractor e)
+        +fetch(String url, int maxChars) Outcome
+    }
+
+    class Outcome {
+        <<record 新增 绝不抛>>
+        +success boolean
+        +errorMessage String
+        +finalUrl String
+        +title String
+        +markdown String
+        +originalChars int
+        +truncatedByBytes boolean
+        +truncatedByChars boolean
+        +redirectChain List~String~
+        +ok(String url, String title, String md)$ Outcome
+        +fail(String errorMessage)$ Outcome
+    }
+
+    WebFetchService *-- WebFetcher
+    WebFetchService *-- HtmlToMarkdownExtractor
+    WebFetchService ..> Outcome
+    WebFetchTool *-- WebFetchService
+
+    %% ==================== rag 包（既有，零改动复用） ====================
+    class CodeRetriever {
+        <<既有 零改动 不抛方法>>
+        +DEFAULT_TOP_K int$
+        +search(String key, Path root, String q, int topK) SearchOutcome
+        +relations(String key, String name) List~CodeRelation~
+        +stats(String projectKey) IndexStats
+    }
+
+    class SearchOutcome {
+        <<record 既有>>
+        +mode Mode
+        +degradeReason DegradeReason
+        +detail String
+        +results List~SearchResult~
+        +degraded() boolean
+        +degradeMessage() String
+    }
+
+    class Mode {
+        <<enumeration 既有>>
+        SEMANTIC_HYBRID
+        KEYWORD_FALLBACK
+    }
+
+    class DegradeReason {
+        <<enumeration 既有>>
+        NONE
+        EMBEDDING_NOT_CONFIGURED
+        INDEX_MISSING
+        EMBEDDING_REQUEST_FAILED
+        INDEX_DIMENSION_MISMATCH
+        +message(String detail) String
+    }
+
+    class SearchResultFormatter {
+        <<既有 复用排版>>
+        +format(String query, SearchOutcome o)$ String
+        +formatEmpty(String query)$ String
+    }
+
+    class VectorStore {
+        <<既有>>
+        +projectKey(Path root)$ String
+    }
+
+    class EmbeddingClientFactory {
+        <<既有>>
+        +create(AppConfig config)$ EmbeddingClient
+    }
+
+    CodeRetriever ..> SearchOutcome
+    SearchOutcome *-- Mode
+    SearchOutcome *-- DegradeReason
+    RagSearchTool *-- CodeRetriever
+    RagSearchTool ..> SearchResultFormatter
+    RagSearchTool ..> VectorStore
+    RagSearchTool ..> EmbeddingClientFactory
+    RagSearchTool *-- ToolContext

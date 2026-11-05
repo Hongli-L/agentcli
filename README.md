@@ -1,5 +1,7 @@
 # AgentCLI
 
+[![CI](https://github.com/Hongli-L/agentcli/actions/workflows/ci.yml/badge.svg)](https://github.com/Hongli-L/agentcli/actions/workflows/ci.yml)
+
 基于 **ReAct** 模式的轻量级命令行 AI Agent。纯 Java 单机应用，无数据库与中间件依赖，聚焦后端架构设计、并发编程与工程化交付。
 
 ## 核心能力
@@ -66,6 +68,8 @@ mvn clean package -DskipTests=false
 ./scripts/package.sh        # Linux / macOS
 ./scripts/package.ps1       # Windows
 ```
+
+不想本地构建时，可直接从 [Releases](https://github.com/Hongli-L/agentcli/releases) 下载已构建的 fat-jar（`agentcli-1.0.0.jar`），配置好 API Key 即可运行。
 
 ### 3. 运行
 

@@ -1,0 +1,76 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant IS as InteractiveSession
+    participant MR as MentionResolver
+    participant Agent as ReActAgent
+    participant Bridge as McpToolBridge
+    participant Client as McpClient
+    participant RPC as JsonRpcClient
+    participant Trans as McpTransport
+    participant Disp as NotificationDispatcher
+    participant Pres as TerminalNotificationPresenter
+    participant Out as ReplReader.printAsync
+
+    Note over User,Out: 场景 A — REPL 用户输入 @path 触发工具调用（P0-1 + P0-2 + P1-3）
+    User->>IS: 输入 "帮我看 @src/main/App.java 的 main"
+    IS->>MR: resolve(line)  // 自由文本解析, 内联文件内容
+    IS->>Agent: run(resolved)
+    Agent->>Bridge: execute(args)  // 模型生成参数字符串可能含 @path
+    Bridge->>Client: callTool(name, argumentsJson)
+    Client->>MR: resolveJson(argumentsJson)  // 遍历 JSON 字符串叶子做 @mention 解析 (覆盖 P1-3)
+    Client->>RPC: request("tools/call", params)
+    RPC->>Trans: send(tools/call)
+    Trans-->>RPC: 响应 (id 非空)
+    RPC-->>Client: 结果文本
+    Client-->>Bridge: 结果
+    Bridge-->>Agent: 结果
+    Agent-->>IS: 回复
+    IS-->>User: 展示
+
+---
+
+sequenceDiagram
+    autonumber
+    participant Server as McpServer
+    participant Trans as McpTransport
+    participant RPC as JsonRpcClient
+    participant Disp as NotificationDispatcher
+    participant Pres as TerminalNotificationPresenter
+    participant Out as ReplReader.printAsync
+
+    Note over Server,Out: 场景 B — server 推送 window/logMessage 被终端展示（P0-3 + P0-4）
+    Server->>Trans: 入站消息 (无 id, method=window/logMessage, params.level=info)
+    Trans->>RPC: handleMessage (经 onReceive 监听; stdio reader线程 / http 请求线程)
+    RPC->>Disp: accept(notification)  // id==null -> 遍历 onNotification 监听器
+    Disp->>Disp: parse -> NotificationRecord(level=INFO, message=...)
+    Disp->>Pres: show(record)
+    Pres->>Pres: 级别过滤(enabled 含 INFO) + 非 PROGRESS 即时
+    Pres->>Out: printer.accept(format(record))
+    Out->>Out: println + flush (不抢占 REPL 输入)
+    Note right of Out: 终端打印: [mcp:github] info   rate limit remaining: 4999
+
+---
+
+sequenceDiagram
+    autonumber
+    actor User
+    participant IS as InteractiveSession
+    participant Client as McpClient
+    participant MR as MentionResolver
+    participant RPC as JsonRpcClient
+    participant Trans as McpTransport
+
+    Note over User,Trans: 场景 C — server 不发通知时正常调用（降级兼容）
+    User->>IS: 输入不含 @mention 的自然语言
+    IS->>Client: callTool(name, argumentsJson)  // 无 @mention
+    Client->>MR: resolveJson(argumentsJson)
+    alt mentionResolver==null 或 无 @token
+        MR-->>Client: 原文不变 (与改造前逐字节一致)
+    end
+    Client->>RPC: request("tools/call", params)
+    Trans-->>RPC: 响应
+    RPC-->>Client: 结果
+    Note over RPC: notificationListeners 为空 -> 无通知处理, 零额外开销/异常
+    Client-->>IS: 结果文本
+    IS-->>User: 展示 (无额外输出/无异常)

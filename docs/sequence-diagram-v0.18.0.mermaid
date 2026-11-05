@@ -1,0 +1,183 @@
+%% AgentCLI v0.18.0 - RAG 向量索引 + 类关系图谱　时序图（/index /search /graph 三命令全链路，含降级分支）
+%% 架构师：高见远　|　配套文档：docs/system_design_v0.18.0.md
+sequenceDiagram
+    autonumber
+    actor User
+    participant IS as InteractiveSession
+    participant RH as RagCommandHandler
+    participant CI as CodeIndex
+    participant CR as CodeRetriever
+    participant CC as CodeChunker
+    participant CA as CodeAnalyzer
+    participant JS as JavaSourceScanner
+    participant EC as EmbeddingClient
+    participant VS as VectorStore
+    participant SS as SqliteStore
+    participant RG as RipgrepCodeSearchEngine
+    participant FM as SearchResultFormatter
+    participant GF as RelationGraphFormatter
+
+    %% ============================================================
+    Note over User,GF: 阶段一：/index 建立或重建索引
+    %% ============================================================
+    User->>IS: /index [路径]
+    IS->>IS: CliCommandParser.parse -> INDEX
+    IS->>RH: handleIndex(payload, out::println)
+    RH->>RH: 解析目标路径（缺省取会话项目根）
+    alt 路径不存在
+        RH-->>IS: "❌ 索引失败: 路径不存在"
+        IS-->>User: 单行错误，不抛栈
+    else 路径有效
+        RH->>CI: index(root, listener)
+        CI-->>IS: onProgress "📦 开始索引: root"
+        CI->>CI: collectSourceFiles 过滤 EXCLUDED_DIRS 与扩展名白名单
+        CI-->>IS: onProgress "扫描文件 ... N 个源文件"
+
+        loop 第一遍：每个 .java 文件
+            CI->>CA: collectTypeNames(content)
+            CA->>JS: mask + findTypeDeclarations
+            JS-->>CA: 类型声明列表
+            CA-->>CI: 类型简单名集合 knownTypes
+        end
+
+        CI->>EC: isAvailable()
+        alt embedding 可用（有 key 或本地回环端点）
+            EC-->>CI: true
+            loop 第二遍：每个源文件
+                CI->>CC: chunkText(relativePath, content)
+                CC->>JS: mask / findMethodDeclarations / matchingBrace
+                JS-->>CC: 类型与方法边界及行号
+                CC-->>CI: List CodeChunk（单块 <= 2000 字符）
+                loop 每个 chunk
+                    CI->>EC: embed(chunk.toEmbeddingText())
+                    alt 成功
+                        EC-->>CI: float 向量
+                        CI->>CI: 累积 ChunkEntry，连续失败计数清零
+                    else 抛 IOException
+                        CI->>CI: 连续失败 +1，达到阈值 3 则熔断
+                        CI-->>IS: onProgress "⚠️ 向量化连续失败，转为仅结构索引"
+                    end
+                end
+                CI->>CA: analyze(relativePath, content, knownTypes)
+                CA-->>CI: List CodeRelation（contains/extends/implements/calls）
+            end
+            CI-->>IS: onProgress "向量化 ....... M/M"
+        else embedding 不可用
+            EC-->>CI: false（reason 未配置 apiKey）
+            CI-->>IS: onProgress "⚠️ 未检测到 embedding 配置，跳过向量化，仅建立结构索引"
+            CI-->>IS: onProgress "提示：配置 embedding 后重新 /index 可启用语义检索"
+            loop 每个 .java 文件（跳过分块与向量化）
+                CI->>CA: analyze(relativePath, content, knownTypes)
+                CA-->>CI: List CodeRelation
+            end
+        end
+
+        Note over CI,VS: 全量数据在内存收集完成后才落库<br/>避免中途失败清空旧索引
+        CI->>VS: clearProject + insertChunks + insertRelations
+        VS->>SS: connect() 短连接
+        SS-->>VS: Connection（busy_timeout 5000）
+        VS->>VS: setAutoCommit(false) -> DELETE -> 批量 INSERT -> commit
+        VS-->>CI: 写入条数
+        CI->>VS: stats(projectKey)
+        VS-->>CI: IndexStats
+        CI-->>RH: IndexResult
+        alt 已向量化
+            RH-->>IS: "✅ 索引完成：128 文件 / 642 块 / 312 条关系 / 耗时 12.4s"
+        else 仅结构索引
+            RH-->>IS: "✅ 结构索引完成：128 文件 / 312 条关系 / 耗时 1.8s"
+        end
+        IS-->>User: 打印结果
+    end
+
+    %% ============================================================
+    Note over User,GF: 阶段二：/search 语义与关键词混合检索（含四条降级分支）
+    %% ============================================================
+    User->>IS: /search 用户登录实现
+    IS->>IS: CliCommandParser.parse -> SEARCH
+    IS->>RH: handleSearch("用户登录实现")
+    alt payload 为空
+        RH-->>IS: "❌ 请提供检索关键词，例如 /search 用户登录实现"
+    else payload 有效
+        RH->>CR: search(projectKey, projectRoot, query, topK=5)
+        CR->>EC: isAvailable()
+        alt 不可用
+            EC-->>CR: false
+            CR->>CR: degradeReason = EMBEDDING_NOT_CONFIGURED
+        else 可用
+            CR->>VS: stats(projectKey)
+            VS-->>CR: IndexStats
+            alt chunkCount == 0
+                CR->>CR: degradeReason = INDEX_MISSING
+            else 索引存在
+                CR->>EC: embed(query)
+                alt 请求失败
+                    EC-->>CR: IOException
+                    CR->>CR: degradeReason = EMBEDDING_REQUEST_FAILED
+                else 返回查询向量
+                    EC-->>CR: float 查询向量
+                    alt 维度与索引不符
+                        CR->>CR: degradeReason = INDEX_DIMENSION_MISMATCH
+                    else 维度一致
+                        CR->>VS: searchByVector(projectKey, queryVector, max(topK*2,10))
+                        VS->>VS: 逐行 VectorMath.cosine 内存计算并排序
+                        VS-->>CR: 语义候选
+                        CR->>CR: RagQueryTokenizer.tokenize(query)
+                        loop 每个关键词
+                            CR->>VS: searchByKeyword(projectKey, keyword, limit)
+                            VS-->>CR: 关键词候选（基分 0.30）
+                        end
+                        CR->>CR: 合并去重 + 双路奖励 0.1 + 类型加分 + 同文件限 2 条 + topK
+                        CR-->>RH: SearchOutcome(SEMANTIC_HYBRID, NONE, results)
+                    end
+                end
+            end
+        end
+        opt 任一降级分支命中
+            CR->>RG: search(query, projectRoot, regex=false, ignoreCase, contextLines=2)
+            RG-->>CR: GrepMatch 列表（rg 不可用时内部已降级 JavaCodeSearchEngine）
+            CR->>CR: 转 SearchResult(score=0.0) 并截断 topK
+            CR-->>RH: SearchOutcome(KEYWORD_FALLBACK, reason, results)
+        end
+        RH->>RH: 降级提示本会话只打印一次
+        RH->>FM: format(query, outcome)
+        FM-->>RH: 排版文本（🔍 标题 / ⚠️ 降级 / 📋 计数 / 序号 类型 路径 行号 得分 片段）
+        RH-->>IS: 结果文本（无命中时 "📭 未找到相关代码"）
+        IS-->>User: 打印结果
+    end
+
+    %% ============================================================
+    Note over User,GF: 阶段三：/graph 类关系图谱（完全不经过 embedding）
+    %% ============================================================
+    User->>IS: /graph ReactAgent
+    IS->>IS: CliCommandParser.parse -> GRAPH
+    IS->>RH: handleGraph("ReactAgent")
+    alt payload 为空
+        RH-->>IS: "❌ 请提供类名，例如 /graph ReactAgent"
+    else payload 有效
+        RH->>CR: stats(projectKey)
+        CR->>VS: stats(projectKey)
+        VS->>SS: connect()
+        SS-->>VS: Connection
+        VS-->>CR: IndexStats
+        CR-->>RH: IndexStats
+        Note over RH: 前置校验只读 relationCount()<br/>绝不读 chunkCount()，修正参考实现的误拦截
+        alt relationCount == 0
+            RH-->>IS: "📭 未找到相关关系（请确认类名拼写，或先执行 /index）"
+        else 关系表非空
+            RH->>CR: relations(projectKey, "ReactAgent")
+            CR->>VS: findRelations(projectKey, name)
+            VS->>SS: SELECT WHERE project_path=? AND (from_name=? OR to_name=?)
+            SS-->>VS: ResultSet
+            VS-->>CR: List CodeRelation
+            CR-->>RH: List CodeRelation
+            alt 查无此名
+                RH-->>IS: "📭 未找到相关关系（请确认类名拼写，或先执行 /index）"
+            else 命中
+                RH->>GF: format("ReactAgent", relations)
+                GF->>GF: 拆出向与入向，按 extends/implements/contains/calls 排序，末条用 └──，超 50 条截断
+                GF-->>RH: 树形文本
+                RH-->>IS: "🕸️ 查询类关系图谱: ReactAgent" + "📋 找到 6 条关系:" + 树形列表
+            end
+        end
+        IS-->>User: 打印结果
+    end

@@ -1,0 +1,318 @@
+%% AgentCLI v0.20.0 · 并发编排底座 + 多 Agent 协作 · 类图
+%% 说明：<<existing>> 为 v0.19.0 已有类（复用，不重写）；<<existing / modified>> 为本版需要修改的既有类。
+%% 零新增依赖，仅使用 java.util.concurrent 标准库。
+
+classDiagram
+    direction LR
+
+    %% ==================== 并发底座 com.agentcli.agent.concurrent ====================
+    class AgentTaskState {
+        <<enumeration>>
+        PENDING
+        RUNNING
+        DONE
+        FAILED
+        CANCELLED
+        TIMEOUT
+        +boolean isTerminal()
+        +boolean canTransitionTo(AgentTaskState to)
+    }
+
+    class AgentTask {
+        -String id
+        -String name
+        -AgentRole role
+        -AtomicReference~AgentTaskState~ state
+        -volatile String result
+        -volatile String error
+        -long createdAt
+        -volatile long startedAt
+        -volatile long finishedAt
+        -CancellationToken token
+        +AgentTask(String id, String name, AgentRole role, CancellationToken token)
+        +String id()
+        +AgentTaskState state()
+        +CancellationToken token()
+        +boolean markRunning()
+        +boolean markDone(String result)
+        +boolean markFailed(String error)
+        +boolean markCancelled()
+        +boolean markTimeout()
+        +long durationMs()
+        +AgentTaskView toView()
+        -boolean transition(AgentTaskState to)
+    }
+
+    class AgentTaskView {
+        <<record>>
+        +String id
+        +String name
+        +AgentRole role
+        +AgentTaskState state
+        +long durationMs
+        +String errorPreview
+        +String summaryLine()
+    }
+
+    class CancellationToken {
+        -AtomicBoolean cancelled
+        -CopyOnWriteArrayList~Runnable~ hooks
+        +void cancel()
+        +boolean isCancelled()
+        +Runnable onCancel(Runnable hook)
+        +void removeHook(Runnable handle)
+        +void throwIfCancelled()
+    }
+
+    class CancellationScope {
+        <<utility>>
+        -ThreadLocal~CancellationToken~ CURRENT
+        +CancellationToken current()$
+        +T call(CancellationToken token, Callable~T~ body)$
+        +void run(CancellationToken token, Runnable body)$
+    }
+
+    class AgentTaskExecutor {
+        <<facade>>
+        -ExecutorService pool
+        -ConcurrentHashMap~String, AgentTask~ tasks
+        -ConcurrentHashMap~String, CompletableFuture~ futures
+        -volatile boolean closed
+        +AgentTaskExecutor(int maxParallel)
+        +CompletableFuture~String~ submit(AgentTask task, Callable~String~ body, long timeoutMs)
+        +boolean cancel(String taskId)
+        +int cancelAll()
+        +List~AgentTaskView~ snapshot()
+        +void close()
+    }
+
+    %% ==================== 编排 com.agentcli.agent.orchestration ====================
+    class AgentRole {
+        <<enumeration>>
+        PLANNER
+        WORKER
+        REVIEWER
+        +String displayName()
+        +String description()
+    }
+
+    class OrchestrationConfig {
+        <<record>>
+        +int maxParallel
+        +int workerCount
+        +long perTaskTimeoutMs
+        +long globalTimeoutMs
+        +boolean reviewerEnabled
+        +int depResultPreviewChars
+        +OrchestrationConfig defaults()$
+    }
+
+    class AgentOrchestrator {
+        <<facade>>
+        -Planner planner
+        -WorkerPool workerPool
+        -ReviewerAgent reviewer
+        -AgentTaskExecutor executor
+        -OrchestrationTrace trace
+        -OrchestrationConfig config
+        -PrintStream out
+        +AgentOrchestrator(LlmClient llm, ToolRegistry tools, OrchestrationConfig cfg)
+        +void setTrace(OrchestrationTrace trace)
+        +void setOut(PrintStream out)
+        +OrchestrationResult run(String goal)
+        -OrchestrationResult runSerial(ExecutionPlan plan, CancellationToken token)
+        -OrchestrationResult runParallel(ExecutionPlan plan, CancellationToken token)
+        -OrchestrationResult aggregate(ExecutionPlan plan, List~AgentTask~ tasks)
+        -void syncPlanTaskState(Task planTask, AgentTask agentTask)
+    }
+
+    class WorkerAgent {
+        -String name
+        -ReActAgent delegate
+        +WorkerAgent(String name, LlmClient llm, ToolRegistry tools)
+        +String name()
+        +String execute(String taskPrompt)
+        +void reset()
+    }
+
+    class WorkerPool {
+        -BlockingQueue~WorkerAgent~ idle
+        +WorkerPool(int size, LlmClient llm, ToolRegistry tools)
+        +WorkerAgent borrow(long timeoutMs)
+        +void release(WorkerAgent worker)
+        +int size()
+    }
+
+    class ReviewerAgent {
+        -ReActAgent delegate
+        +ReviewerAgent(LlmClient llm, ToolRegistry tools)
+        +ReviewVerdict review(String goal, String aggregate)
+        +boolean parseApproval(String raw)
+        +String parseIssues(String raw)
+    }
+
+    class ReviewVerdict {
+        <<record>>
+        +boolean approved
+        +String issues
+        +String summary
+    }
+
+    class StepContextBuilder {
+        <<utility>>
+        +String build(ExecutionPlan plan, Task task, int previewChars)$
+    }
+
+    class OrchestrationResult {
+        <<record>>
+        +boolean degraded
+        +List~AgentTaskView~ tasks
+        +String summaryText
+        +ReviewVerdict reviewVerdict
+    }
+
+    %% ==================== 轨迹观测 com.agentcli.audit ====================
+    class OrchestrationTrace {
+        -AuditLog auditLog
+        +OrchestrationTrace(AuditLog auditLog)
+        +void planned(String planId, int taskCount)
+        +void dispatched(String planId, AgentTask task)
+        +void completed(String planId, AgentTask task)
+        +void failed(String planId, AgentTask task)
+        +void cancelled(String planId, AgentTask task)
+        +void timedOut(String planId, AgentTask task)
+        +void reviewed(String planId, ReviewVerdict verdict)
+        -void emit(String event, String target, AgentTask task)
+    }
+
+    class AuditLog {
+        <<existing>>
+        +void recordLlm(String model, int in, int out, int cached, long latency, String reasoning, boolean hasTools)
+        +void recordApproval(String tool, String decision, String reason, String args)
+        +List~AuditEntry~ query(int limit, String kind)
+    }
+
+    %% ==================== 复用/修改的既有组件 ====================
+    class ReActAgent {
+        <<existing / modified>>
+        -List~Message~ conversationHistory
+        +String run(String userInput)
+        +void clearHistory()
+        +void setListener(AgentRunListener l)
+        +ToolRegistry getToolRegistry()
+    }
+
+    class AgentBudget {
+        <<existing>>
+        +AgentBudget fromLlmClient(LlmClient c)$
+        +ExitReason check()
+    }
+
+    class Planner {
+        <<existing>>
+        +ExecutionPlan createPlan(String goal)
+        +ExecutionPlan replan(ExecutionPlan failed, String reason)
+    }
+
+    class ExecutionPlan {
+        <<existing>>
+        -Map~String, Task~ tasks
+        +List~Task~ getExecutableTasks()
+        +List~String~ getExecutionOrder()
+        +boolean computeExecutionOrder()
+        +boolean isAllCompleted()
+    }
+
+    class Task {
+        <<existing>>
+        +TaskStatus getStatus()
+        +List~String~ getDependencies()
+        +void markCompleted(String result)
+        +void markFailed(String error)
+        +void markSkipped()
+    }
+
+    class ToolRegistry {
+        <<existing / modified>>
+        -Map~String, Tool~ tools
+        +List~ToolExecutionResult~ executeTools(List~ToolInvocation~ invocations)
+        +List~Tool~ getToolDefinitions()
+        +void register(Tool tool)
+    }
+
+    class ToolExecutionResult {
+        <<existing / modified>>
+        +ToolExecutionResult completed(...)$
+        +ToolExecutionResult timedOut(...)$
+        +ToolExecutionResult failed(...)$
+        +ToolExecutionResult cancelled(ToolInvocation inv)$
+    }
+
+    class OpenAiCompatibleClient {
+        <<existing / modified>>
+        #OkHttpClient httpClient()
+        +ChatResponse chat(List~Message~ msgs, List~Tool~ tools, StreamListener l)
+        -ChatResponse parseStream(BufferedSource src, StreamListener l)
+    }
+
+    class InteractiveSession {
+        <<existing / modified>>
+        -AgentTaskExecutor taskExecutor
+        -OrchestrationTrace trace
+        +boolean handleCommand(ParsedCommand cmd, PrintStream out)
+        -void handleTeam(String goal, PrintStream out)
+        -void handleCancel(String taskId, PrintStream out)
+        -void handleTasks(PrintStream out)
+    }
+
+    class CliCommandParser {
+        <<existing / modified>>
+        +ParsedCommand parse(String input)$
+        +List~String~ commandNames()$
+    }
+
+    %% ==================== 关系 ====================
+    AgentTask --> AgentTaskState : AtomicReference 持有
+    AgentTask --> CancellationToken : 每任务一个
+    AgentTask --> AgentRole
+    AgentTask ..> AgentTaskView : 生成只读快照
+    AgentTaskExecutor "1" *-- "0..*" AgentTask : 任务注册表
+    AgentTaskExecutor ..> CancellationScope : 任务体 bind/unbind
+    CancellationScope ..> CancellationToken : ThreadLocal 承载
+
+    AgentOrchestrator --> AgentTaskExecutor
+    AgentOrchestrator --> WorkerPool
+    AgentOrchestrator --> ReviewerAgent
+    AgentOrchestrator --> OrchestrationConfig
+    AgentOrchestrator --> Planner : 复用既有 DAG 规划
+    AgentOrchestrator --> OrchestrationTrace : 可为 null（空对象）
+    AgentOrchestrator ..> ExecutionPlan
+    AgentOrchestrator ..> StepContextBuilder
+    AgentOrchestrator ..> OrchestrationResult : 产出
+
+    WorkerPool "1" *-- "N" WorkerAgent : BlockingQueue 池化
+    WorkerAgent --> ReActAgent : 委托（独立历史 + 独立预算）
+    ReActAgent ..> AgentBudget
+    ReviewerAgent --> ReActAgent
+    ReviewerAgent ..> ReviewVerdict
+    OrchestrationResult --> ReviewVerdict
+    OrchestrationResult --> AgentTaskView
+
+    ExecutionPlan "1" *-- "N" Task
+    StepContextBuilder ..> ExecutionPlan : 只取依赖结果摘要
+    StepContextBuilder ..> Task
+
+    ReActAgent --> ToolRegistry
+    ReActAgent ..> CancellationScope : 循环头轮询 L1
+    ToolRegistry ..> CancellationScope : 批次前轮询 L1
+    ToolRegistry ..> ToolExecutionResult
+    OpenAiCompatibleClient ..> CancellationScope : 注册 Call.cancel 钩子 L3
+
+    OrchestrationTrace --> AuditLog : 复用 audit_log 表
+    OrchestrationTrace ..> AgentTask
+    OrchestrationTrace ..> ReviewVerdict
+
+    InteractiveSession --> AgentTaskExecutor : /tasks /cancel
+    InteractiveSession ..> AgentOrchestrator : /team
+    InteractiveSession --> OrchestrationTrace
+    InteractiveSession ..> CliCommandParser

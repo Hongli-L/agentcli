@@ -1,0 +1,174 @@
+classDiagram
+    direction TB
+
+    %% ===== 图例 =====
+    note for McpTransport "<<existing-contract>> 零改动"
+    note for McpClient "<<modify>> 兼容扩展"
+    note for MentionResolver "<<new>>"
+    note for NotificationDispatcher "<<new>>"
+
+    %% ===== 既有抽象（契约不变 / 只读复用） =====
+    class McpTransport {
+        <<interface>>
+        +send(message: JsonNode): void
+        +onReceive(listener: Consumer~JsonNode~): void
+        +close(): void
+        +transportName(): String
+    }
+    class JsonRpcClient {
+        +request(method, params, timeoutSeconds): JsonNode
+        +onNotification(listener: Consumer~JsonNode~): void
+        -List~Consumer~JsonNode~~ notificationListeners
+    }
+    class PathGuard {
+        <<existing common>>
+        +resolveSafe(input: String): Path
+    }
+    class AnsiStyle {
+        <<existing common>>
+        +isEnabled(): boolean
+    }
+    class ReplReader {
+        <<interface, modify>>
+        +readLine(prompt: String): String
+        +printAsync(line: String): void {new default}
+    }
+    class JlineReplReader {
+        -Terminal terminal
+        +readLine(prompt: String): String
+        +printAsync(line: String): void {override}
+    }
+    class BufferedReplReader {
+        +printAsync(line: String): void {override}
+    }
+
+    %% ===== 新增：mention =====
+    class MentionPolicy {
+        <<new constants>>
+        +MAX_INLINE_BYTES: int = 32*1024
+        +TRUNCATED_MARKER: String
+        +MENTION_PATTERN: Pattern
+        +inlineFormat(relPath, content): String
+    }
+    class MentionResolver {
+        <<new>>
+        -PathGuard pathGuard
+        -Path projectDir
+        +MentionResolver(projectDir: Path)
+        +resolve(text: String): String
+        +resolveJson(argumentsJson: String): String
+        -resolveMention(token: String): String
+        -expandTilde(p: String): String
+    }
+
+    %% ===== 新增：notify =====
+    class NotificationLevel {
+        <<new enum>>
+        ERROR / WARNING / INFO / DEBUG / LOG / PROGRESS
+        +fromString(s: String): NotificationLevel
+        +label(): String
+    }
+    class NotificationRecord {
+        <<new record>>
+        +serverName: String
+        +level: NotificationLevel
+        +method: String
+        +message: String
+        +progress: Long
+        +total: Long
+    }
+    class NotificationPresenter {
+        <<new interface>>
+        +show(record: NotificationRecord): void
+    }
+    class NotificationDispatcher {
+        <<new>>
+        -String serverName
+        -NotificationPresenter presenter
+        +NotificationDispatcher(serverName, presenter)
+        +accept(notification: JsonNode): void
+        -parse(notification: JsonNode): NotificationRecord
+    }
+    class NotificationFormat {
+        <<new>>
+        +PREFIX: String = "[mcp:%s]"
+        +DEBOUNCE_WINDOW_MS: int = 200
+        +DEFAULT_ENABLED: Set~NotificationLevel~
+        +format(record: NotificationRecord): String
+    }
+    class TerminalNotificationPresenter {
+        <<new>>
+        -Consumer~String~ printer
+        -Set~NotificationLevel~ enabled
+        -long debounceWindowMs
+        -Map~String,Long~ lastProgressEmit
+        +TerminalNotificationPresenter(printer)
+        +TerminalNotificationPresenter(printer, enabled, debounceWindowMs)
+        +show(record: NotificationRecord): void
+    }
+
+    %% ===== 修改/既有：mcp 客户端 =====
+    class McpClient {
+        <<modify>>
+        -MentionResolver mentionResolver
+        -NotificationDispatcher notificationDispatcher
+        +McpClient(serverName, transport)
+        +McpClient(serverName, transport, projectDir, presenter)  {new}
+        +initialize(): void
+        +callTool(toolName, argumentsJson): String
+        +registerNotificationListener(listener): void  {new}
+    }
+    class McpToolBridge {
+        <<existing>>
+        +execute(args: Map~String,String~): String
+    }
+    class McpServerManager {
+        <<modify>>
+        -Consumer~String~ notificationPrinter
+        +setNotificationPrinter(printer): void  {new}
+        +start(server): void
+    }
+    class McpServer {
+        <<existing>>
+    }
+
+    %% ===== 修改/既有：cli =====
+    class InteractiveSession {
+        <<modify>>
+        -MentionResolver mentionResolver
+        +setMentionResolver(r): void  {new}
+        +run(input, out): void
+    }
+    class Launcher {
+        <<modify>>
+        +run(args, out, err): void
+    }
+
+    %% ===== 关系 =====
+    JlineReplReader ..|> ReplReader
+    BufferedReplReader ..|> ReplReader
+    TerminalNotificationPresenter ..|> NotificationPresenter
+
+    McpClient o-- MentionResolver : 持有(可空=降级)
+    McpClient o-- NotificationDispatcher : 持有(可空=降级)
+    McpClient --> JsonRpcClient : 委派 onNotification
+    JsonRpcClient --> McpTransport : onReceive 链路(零改动)
+
+    McpServerManager o-- McpClient : 创建(注入 projectDir+presenter)
+    McpServerManager o-- TerminalNotificationPresenter : 创建(注入 printer)
+    McpServerManager --> McpServer : 管理
+    McpServer o-- McpClient
+
+    McpToolBridge --> McpClient : execute -> callTool(注入落点)
+
+    NotificationDispatcher --> NotificationPresenter : 持有并 show()
+    NotificationDispatcher --> NotificationRecord : 产出
+    TerminalNotificationPresenter --> NotificationFormat : 格式化+去抖+过滤
+    NotificationFormat ..> AnsiStyle : 着色
+
+    MentionResolver --> MentionPolicy : 常量
+    MentionResolver --> PathGuard : 复用安全校验
+    InteractiveSession --> MentionResolver : REPL 自由文本 resolve
+    Launcher --> McpServerManager : setNotificationPrinter
+    Launcher --> InteractiveSession : setMentionResolver
+    ReplReader <.. TerminalNotificationPresenter : printer=input::printAsync(安全打印)

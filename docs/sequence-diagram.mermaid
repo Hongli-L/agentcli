@@ -1,0 +1,143 @@
+%% AgentCLI v0.19.0 联网闭环与检索工具化 — 时序图
+%% 流程一：web_fetch（SSRF 每跳校验 + 零依赖 HTML 转 Markdown）
+%% 流程二：rag_search（复用 v0.18.0 降级树并自述降级）
+%% 注：泛型一律写作 List~T~，避免尖括号被当作 HTML 标签
+sequenceDiagram
+    autonumber
+    participant LLM as LLM (tool_call)
+    participant REG as ToolRegistry
+    participant WFT as WebFetchTool
+    participant SVC as WebFetchService
+    participant WF as WebFetcher
+    participant NP as NetworkPolicy
+    participant OK as OkHttpClient
+    participant EX as HtmlToMarkdownExtractor
+    participant TK as HtmlTagTokenizer
+    participant RULES as HtmlExtractionRules
+
+    rect rgb(232, 244, 253)
+    Note over LLM,RULES: 流程一 web_fetch —— 搜索/抓取/归纳 闭环中的「抓取」环节
+
+    LLM->>REG: executeTool("web_fetch", {url, max_chars})
+    REG->>REG: parseArguments(JSON) 转 Map
+    REG->>WFT: execute(args)
+    WFT->>WFT: url 非空校验 + max_chars clamp(1000, 60000)
+    WFT->>SVC: fetch(url, maxChars)
+    SVC->>WF: fetch(url)
+
+    Note over WF,NP: 显式层 第 1 跳：可读、可精确报错
+    WF->>NP: checkUrl(url)
+    NP->>NP: checkScheme 仅 http/https
+    NP->>NP: checkPort 端口黑名单
+    NP->>NP: resolveAndCheck(host) DNS 解析后逐 IP 校验
+    NP->>NP: CIDR 判定 127/8, 10/8, 172.16/12, 192.168/16,<br/>169.254/16 云元数据, ::1, fc00::/7, fe80::/10
+
+    alt 命中内网或保留段
+        NP-->>WF: "禁止访问私有地址（10.0.0.1）"
+        WF-->>SVC: throw IOException(reason)
+        SVC-->>WFT: Outcome.fail("网络访问被拒绝: ...")
+        WFT-->>REG: "❌ 抓取失败: 网络访问被拒绝: ..."
+        REG-->>LLM: 单行错误文本，不抛异常、不中断对话
+    else 校验通过
+        NP-->>WF: null 放行
+
+        WF->>OK: newCall(request).execute()<br/>followRedirects=false, connect 5s, read 15s
+
+        Note over OK,NP: 兜底层：NetworkPolicy 兼作 okhttp3.Dns<br/>建连用的就是校验过的 IP，消灭 DNS rebinding 的 TOCTOU 窗口
+        OK->>NP: lookup(hostname)
+        NP->>NP: 逐 IP 校验，命中即抛 SsrfBlockedException
+        NP-->>OK: List~InetAddress~ 已 pin 的安全地址
+
+        OK-->>WF: Response 3xx + Location 头
+
+        loop 手动重定向，最多 5 跳，每跳重走完整围栏
+            WF->>WF: 解析 Location，相对地址转绝对
+            WF->>NP: checkUrl(nextUrl) ← 关键：封堵重定向绕过
+            alt 重定向目标命中内网（例如云元数据 169.254.169.254）
+                NP-->>WF: "禁止访问链路本地地址"
+                WF-->>SVC: throw IOException("重定向第 2 跳被拒绝: ...")
+            else 通过
+                NP-->>WF: null
+                WF->>OK: 请求下一跳
+                OK-->>WF: Response 200
+            end
+        end
+
+        WF->>WF: checkContentType 白名单<br/>text/html, application/xhtml+xml, text/plain
+        WF->>WF: readBounded(stream, 2MB) 流式读取，超限截断置 truncated
+        WF->>WF: resolveCharset: Content-Type charset 优先，meta 嗅探次之，UTF-8 兜底
+        WF-->>SVC: FetchResult(finalUrl, 200, contentType, body, truncated, redirectChain)
+
+        alt contentType 为 HTML
+            SVC->>EX: extract(html, finalUrl)
+            EX->>TK: tokenize(html)
+            TK->>TK: 手写状态机 TEXT / TAG_OPEN / ATTR_ / COMMENT / RAWTEXT<br/>RAWTEXT 模式下 script 与 style 内的左尖括号一律当文本
+            TK-->>EX: List~Token~ 上限 20 万，防畸形 HTML 撑爆内存
+            EX->>EX: pickTitle: title 标签优先，回退首个 h1
+            EX->>RULES: isNoiseTag / isNoiseMarker
+            RULES-->>EX: 剔除 script,style,nav,aside,footer,header,form<br/>及 class/id 含 ads,banner,sidebar 等
+            EX->>EX: Phase1 locateMainRegion 统计各块级容器的文本长度与链接文本长度
+            EX->>RULES: scoreContainer(textLen, linkLen)
+            RULES-->>EX: textLen × (1 − min(linkRatio × 2, 1))，选最高分区间
+            EX->>EX: Phase2 render 显式栈遍历区间<br/>不递归，深度上限 512，未闭合标签不崩
+            EX->>RULES: decodeEntities / headingPrefix / collapseBlankLines
+            RULES-->>EX: 零依赖实体解码 + Markdown 前缀映射
+            EX-->>SVC: Extracted(title, markdown)
+        else contentType 为 text/plain
+            SVC->>SVC: 原文直通，title 取 finalUrl
+        end
+
+        SVC->>SVC: maxChars 截断，置 truncatedByChars
+        SVC-->>WFT: Outcome.ok(finalUrl, title, markdown, ...)
+        WFT->>WFT: render 排版：🌐 标题 + 🔗 最终 URL<br/>+ 重定向跳数 + 截断提示 + Markdown 正文
+        WFT-->>REG: 结果文本
+        REG-->>LLM: tool 角色消息回灌
+    end
+    end
+
+    participant RST as RagSearchTool
+    participant CR as CodeRetriever
+    participant VS as VectorStore
+    participant FMT as SearchResultFormatter
+
+    rect rgb(237, 247, 237)
+    Note over LLM,FMT: 流程二 rag_search —— 语义检索工具化，与 grep_code 组成双路
+
+    LLM->>REG: executeTool("rag_search", {query, top_k})
+    REG->>RST: execute(args)
+    RST->>RST: query 非空校验 + top_k clamp(1, 20)
+    RST->>RST: retriever() 双重检查锁懒加载
+
+    alt 首次调用（构造期绝不碰 SQLite）
+        RST->>RST: AppConfig.load()
+        RST->>RST: new VectorStore(SqliteStore.defaultStore())
+        RST->>RST: EmbeddingClientFactory.create(config)
+        RST->>RST: new CodeRetriever(store, embedding, RipgrepCodeSearchEngine)
+        alt 装配失败 SQLException 或 RuntimeException
+            RST-->>REG: "⚠️ 语义检索不可用: 单行原因；请改用 grep_code 关键词检索"
+            REG-->>LLM: 自述不可用，不静默失败
+        end
+    end
+
+    RST->>VS: projectKey(context.projectPath())
+    Note right of VS: 每次 execute 现算，<br/>支持会话中途切换项目根
+    VS-->>RST: projectKey
+
+    RST->>CR: search(projectKey, projectRoot, query, topK)
+
+    alt embedding 就绪且索引存在
+        CR->>CR: embed(query) 后 searchByVector + searchByKeyword
+        CR->>CR: 双路加权 DUAL_HIT / NAME / PATH / CONTENT / TYPE bonus<br/>再 limitPerFile 去霸屏
+        CR-->>RST: SearchOutcome(SEMANTIC_HYBRID, NONE, results)
+    else 复用 v0.18.0 降级树
+        CR->>CR: 判定 EMBEDDING_NOT_CONFIGURED / INDEX_MISSING /<br/>EMBEDDING_REQUEST_FAILED / INDEX_DIMENSION_MISMATCH
+        CR->>CR: ripgrepFallback 关键词兜底
+        CR-->>RST: SearchOutcome(KEYWORD_FALLBACK, reason, results)
+    end
+
+    RST->>FMT: format(query, outcome)
+    Note right of FMT: 直接透出 degradeMessage()<br/>不套用 /search 的「一次性提示」策略：<br/>LLM 每轮独立读结果，抹掉降级信息会误判语义检索有效
+    FMT-->>RST: 🔍 检索行 + ⚠️ 降级提示 + 📋 结果列表
+    RST-->>REG: 结果文本
+    REG-->>LLM: tool 角色消息回灌
+    end

@@ -1,0 +1,358 @@
+%% AgentCLI v0.18.0 - RAG 向量索引 + 类关系图谱　类图
+%% 架构师：高见远　|　配套文档：docs/system_design_v0.18.0.md
+classDiagram
+    direction LR
+
+    %% ========== 数据模型层 ==========
+    class CodeChunk {
+        <<record>>
+        +String filePath
+        +String chunkType
+        +String name
+        +String content
+        +int startLine
+        +int endLine
+        +fileChunk(String filePath, String name, String content, int startLine, int endLine)$ CodeChunk
+        +typeChunk(String filePath, String kind, String name, String content, int startLine, int endLine)$ CodeChunk
+        +methodChunk(String filePath, String name, String content, int startLine, int endLine)$ CodeChunk
+        +toEmbeddingText() String
+        +location() String
+    }
+
+    class CodeRelation {
+        <<record>>
+        +String fromFile
+        +String fromName
+        +String toFile
+        +String toName
+        +String relationType
+        +CONTAINS$ String
+        +EXTENDS$ String
+        +IMPLEMENTS$ String
+        +CALLS$ String
+        +orderOf(String relationType)$ int
+    }
+
+    %% ========== 能力层 ==========
+    class EmbeddingClient {
+        <<interface>>
+        +embed(String text) float[]
+        +isAvailable() boolean
+        +unavailableReason() String
+        +modelName() String
+        +baseUrl() String
+        +disabled(String reason)$ EmbeddingClient
+    }
+
+    class OpenAiCompatibleEmbeddingClient {
+        -String apiKey
+        -String baseUrl
+        -String model
+        -OkHttpClient http
+        -MAX_INPUT_CHARS$ int
+        +OpenAiCompatibleEmbeddingClient(String apiKey, String baseUrl, String model)
+        +embed(String text) float[]
+        +isAvailable() boolean
+        +unavailableReason() String
+        -postJson(String url, String body) String
+        -parseEmbedding(String responseBody) float[]
+        -resolveEmbeddingsUrl(String baseUrl)$ String
+        -isLoopback(String baseUrl)$ boolean
+    }
+
+    class EmbeddingClientFactory {
+        <<utility>>
+        +create(AppConfig config)$ EmbeddingClient
+    }
+
+    class VectorMath {
+        <<utility>>
+        +cosine(float[] a, float[] b)$ double
+        +toJson(float[] vector)$ String
+        +fromJson(String json)$ float[]
+    }
+
+    class VectorStore {
+        -SqliteStore store
+        +VectorStore(SqliteStore store)
+        +projectKey(Path root)$ String
+        +clearProject(String projectKey) void
+        +insertChunks(String projectKey, List~ChunkEntry~ entries) int
+        +insertRelations(String projectKey, List~CodeRelation~ relations) int
+        +searchByVector(String projectKey, float[] query, int topK) List~SearchResult~
+        +searchByKeyword(String projectKey, String keyword, int limit) List~SearchResult~
+        +findRelations(String projectKey, String name) List~CodeRelation~
+        +stats(String projectKey) IndexStats
+    }
+
+    class ChunkEntry {
+        <<record>>
+        +CodeChunk chunk
+        +float[] embedding
+        +String model
+    }
+
+    class SearchResult {
+        <<record>>
+        +String filePath
+        +String chunkType
+        +String name
+        +String content
+        +int startLine
+        +int endLine
+        +double score
+        +withScore(double score) SearchResult
+        +key() String
+    }
+
+    class IndexStats {
+        <<record>>
+        +int chunkCount
+        +int relationCount
+        +int fileCount
+        +long indexedAt
+        +String embeddingModel
+        +int embeddingDim
+        +hasVectors() boolean
+        +hasRelations() boolean
+    }
+
+    class JavaSourceScanner {
+        <<utility>>
+        +mask(String source)$ String
+        +matchingBrace(String masked, int openBraceIndex)$ int
+        +nextBrace(String masked, int fromIndex)$ int
+        +lineStarts(String source)$ int[]
+        +lineOf(int[] lineStarts, int offset)$ int
+        +findTypeDeclarations(String masked)$ List~Declaration~
+        +findMethodDeclarations(String masked, int fromIndex, int toIndex)$ List~Declaration~
+        +findVariableTypes(String masked, int fromIndex, int toIndex)$ Map~String,String~
+    }
+
+    class Declaration {
+        <<record>>
+        +String kind
+        +String name
+        +int declStart
+        +int bodyStart
+        +int bodyEnd
+    }
+
+    %% ========== 编排层 ==========
+    class CodeChunker {
+        -int maxChunkChars
+        -int overlapChars
+        +MAX_CHUNK_CHARS$ int
+        +OVERLAP_CHARS$ int
+        +CodeChunker()
+        +CodeChunker(int maxChunkChars, int overlapChars)
+        +chunkFile(Path file, String relativePath) List~CodeChunk~
+        +chunkText(String relativePath, String content) List~CodeChunk~
+        -chunkJava(String relativePath, String content) List~CodeChunk~
+        -chunkFixedWindow(String relativePath, String name, String content, int baseLine) List~CodeChunk~
+    }
+
+    class CodeAnalyzer {
+        +collectTypeNames(String content)$ Set~String~
+        +analyze(String relativePath, String content, Set~String~ knownTypes) List~CodeRelation~
+        -extractInheritance(String relativePath, Declaration type, List~CodeRelation~ sink) void
+        -extractContains(String relativePath, Declaration type, List~CodeRelation~ sink) void
+        -extractCalls(String relativePath, Declaration type, Set~String~ knownTypes, List~CodeRelation~ sink) void
+    }
+
+    class CodeIndex {
+        -VectorStore store
+        -EmbeddingClient embedding
+        -CodeChunker chunker
+        -CodeAnalyzer analyzer
+        -EMBED_FAILURE_THRESHOLD$ int
+        +CodeIndex(VectorStore store, EmbeddingClient embedding)
+        +CodeIndex(VectorStore store, EmbeddingClient embedding, CodeChunker chunker, CodeAnalyzer analyzer)
+        +index(Path root, ProgressListener listener) IndexResult
+        +checkFreshness(Path root, IndexStats stats) Freshness
+        -collectSourceFiles(Path root) List~Path~
+    }
+
+    class ProgressListener {
+        <<interface>>
+        +onProgress(String message) void
+        +noop()$ ProgressListener
+    }
+
+    class IndexResult {
+        <<record>>
+        +boolean success
+        +int fileCount
+        +int chunkCount
+        +int relationCount
+        +int failedFileCount
+        +long elapsedMs
+        +boolean vectorized
+        +String degradeReason
+        +String message
+    }
+
+    class Freshness {
+        <<record>>
+        +boolean stale
+        +String hint
+    }
+
+    class CodeRetriever {
+        -VectorStore store
+        -EmbeddingClient embedding
+        -CodeSearchEngine fallbackEngine
+        -DEFAULT_TOP_K$ int
+        +CodeRetriever(VectorStore store, EmbeddingClient embedding, CodeSearchEngine fallbackEngine)
+        +search(String projectKey, Path projectRoot, String query, int topK) SearchOutcome
+        +relations(String projectKey, String name) List~CodeRelation~
+        +stats(String projectKey) IndexStats
+        -hybrid(String projectKey, String query, float[] queryVector, int topK) List~SearchResult~
+        -ripgrepFallback(Path projectRoot, String query, int topK) List~SearchResult~
+        -typeBoost(String chunkType)$ double
+        -limitPerFile(List~SearchResult~ sorted, int topK, int maxPerFile)$ List~SearchResult~
+    }
+
+    class SearchOutcome {
+        <<record>>
+        +Mode mode
+        +DegradeReason degradeReason
+        +List~SearchResult~ results
+        +degraded() boolean
+    }
+
+    class Mode {
+        <<enumeration>>
+        SEMANTIC_HYBRID
+        KEYWORD_FALLBACK
+    }
+
+    class DegradeReason {
+        <<enumeration>>
+        NONE
+        EMBEDDING_NOT_CONFIGURED
+        EMBEDDING_REQUEST_FAILED
+        INDEX_MISSING
+        INDEX_DIMENSION_MISMATCH
+        +message() String
+    }
+
+    %% ========== 展现层与门面 ==========
+    class RagQueryTokenizer {
+        <<utility>>
+        +tokenize(String query)$ Set~String~
+        -splitCamelCase(String token, Set~String~ sink)$ void
+        -addChineseBigrams(String part, Set~String~ sink)$ void
+        -isStopword(String token)$ boolean
+    }
+
+    class SearchResultFormatter {
+        <<utility>>
+        +format(String query, SearchOutcome outcome)$ String
+        +formatEmpty(String query)$ String
+        -snippet(String content, int maxChars)$ String
+    }
+
+    class RelationGraphFormatter {
+        <<utility>>
+        +format(String name, List~CodeRelation~ relations)$ String
+        +formatEmpty(String name)$ String
+        -renderBranch(CodeRelation relation, boolean last, boolean outgoing)$ String
+    }
+
+    class RagCommandHandler {
+        -CodeIndex codeIndex
+        -CodeRetriever retriever
+        -Path sessionProjectRoot
+        -boolean degradeNoticeShown
+        +create(AppConfig config, String projectPath)$ RagCommandHandler
+        +RagCommandHandler(CodeIndex codeIndex, CodeRetriever retriever, Path sessionProjectRoot)
+        +handleIndex(String payload, ProgressListener listener) String
+        +handleSearch(String payload) String
+        +handleGraph(String payload) String
+    }
+
+    %% ========== 既有组件（复用 / 增量修改） ==========
+    class SqliteStore {
+        +defaultStore()$ SqliteStore
+        +open(Path dbPath)$ SqliteStore
+        +connect() Connection
+        -ensureSchema() void
+    }
+
+    class AppConfig {
+        +getEmbeddingApiKey() String
+        +getEmbeddingBaseUrl() String
+        +getEmbeddingModel() String
+    }
+
+    class CodeSearchEngine {
+        <<interface>>
+        +EXCLUDED_DIRS$ Set~String~
+        +search(CodeSearchRequest request) CodeSearchResult
+    }
+
+    class RipgrepCodeSearchEngine {
+        +search(CodeSearchRequest request) CodeSearchResult
+    }
+
+    class InteractiveSession {
+        -RagCommandHandler ragHandler
+        +setRagCommandHandler(RagCommandHandler handler) void
+        -ragHandler() RagCommandHandler
+        -handleIndex(String payload, PrintStream out) void
+        -handleSearch(String payload, PrintStream out) void
+        -handleGraph(String payload, PrintStream out) void
+    }
+
+    class CliCommandParser {
+        +parse(String input)$ ParsedCommand
+        +commandNames()$ List~String~
+    }
+
+    %% ========== 关系 ==========
+    OpenAiCompatibleEmbeddingClient ..|> EmbeddingClient : implements
+    RipgrepCodeSearchEngine ..|> CodeSearchEngine : implements
+    EmbeddingClientFactory ..> EmbeddingClient : creates
+    EmbeddingClientFactory ..> OpenAiCompatibleEmbeddingClient : instantiates
+    EmbeddingClientFactory ..> AppConfig : reads
+
+    VectorStore *-- ChunkEntry : nested record
+    VectorStore *-- SearchResult : nested record
+    VectorStore *-- IndexStats : nested record
+    VectorStore --> SqliteStore : short lived connection
+    VectorStore ..> VectorMath : uses
+    VectorStore ..> CodeChunk : persists
+    VectorStore ..> CodeRelation : persists
+
+    JavaSourceScanner *-- Declaration : nested record
+    CodeChunker ..> JavaSourceScanner : uses
+    CodeChunker ..> CodeChunk : produces
+    CodeAnalyzer ..> JavaSourceScanner : uses
+    CodeAnalyzer ..> CodeRelation : produces
+
+    CodeIndex *-- ProgressListener : nested interface
+    CodeIndex *-- IndexResult : nested record
+    CodeIndex *-- Freshness : nested record
+    CodeIndex --> VectorStore : writes
+    CodeIndex --> EmbeddingClient : embeds chunks
+    CodeIndex --> CodeChunker : chunks
+    CodeIndex --> CodeAnalyzer : analyzes
+
+    CodeRetriever *-- SearchOutcome : nested record
+    CodeRetriever *-- Mode : nested enum
+    CodeRetriever *-- DegradeReason : nested enum
+    CodeRetriever --> VectorStore : reads
+    CodeRetriever --> EmbeddingClient : embeds query
+    CodeRetriever --> CodeSearchEngine : ripgrep fallback
+    CodeRetriever ..> RagQueryTokenizer : tokenizes
+
+    RagCommandHandler --> CodeIndex : delegates index
+    RagCommandHandler --> CodeRetriever : delegates search and graph
+    RagCommandHandler ..> SearchResultFormatter : renders
+    RagCommandHandler ..> RelationGraphFormatter : renders
+    SearchResultFormatter ..> SearchOutcome : reads
+    RelationGraphFormatter ..> CodeRelation : reads
+
+    InteractiveSession --> RagCommandHandler : dispatches
+    InteractiveSession ..> CliCommandParser : parses
