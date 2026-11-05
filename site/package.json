@@ -1,0 +1,17 @@
+{
+  "name": "agentcli-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AgentCLI 轻量作品集展示页（VitePress）",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "mermaid": "^11.4.1",
+    "vitepress": "^1.6.0",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  }
+}

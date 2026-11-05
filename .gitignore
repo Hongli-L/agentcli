@@ -22,10 +22,15 @@ build/
 
 # 日志
 *.log
+hs_err_pid*.log
+
+# 本地构建/测试日志（mvn 输出留存）
+mvn_*.txt
 
 # 内部参考文件
 ROADMAP.md
 INTERVIEW_PREP.md
+USABILITY_SPRINT.md
 
 # 操作系统
 .DS_Store

@@ -1,0 +1,53 @@
+/* ==========================================================================
+   AgentCLI 展示页极简样式补丁
+   规格约束：不做深色主题定制、不重写主题变量体系，只做两件事：
+   1) 硬隐藏全文搜索入口（R0-2 明令禁止全文搜索）
+   2) 让首页亮点表格与提示条在窄屏下更耐看
+   ========================================================================== */
+
+/* 1) 隐藏 VitePress 默认搜索框 —— 桌面端导航栏入口 */
+.VPNavBarSearch {
+  display: none !important;
+}
+
+/* 移动端搜索按钮与搜索弹层一并隐藏，避免留下半个入口 */
+.VPNavBarSearchButton,
+.VPLocalSearchBox,
+button.DocSearch-Button,
+.VPNavBar .search {
+  display: none !important;
+}
+
+/* 搜索框占位被移除后，把导航右侧的空槽收回去 */
+.VPNavBar .content-body {
+  gap: 12px;
+}
+
+/* 2) 表格：首页亮点表 / 量化数据表在窄屏下允许横向滚动，不撑破布局 */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.vp-doc th,
+.vp-doc td {
+  vertical-align: top;
+}
+
+/* 首行「状态」列里的 ⏳ 统一为等宽视觉，避免表格抖动 */
+.vp-doc td code {
+  white-space: nowrap;
+}
+
+/* mermaid 图居中，避免大图左对齐显得空旷 */
+.vp-doc .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 24px 0;
+}
+
+/* 首页 hero 下方的「量化数据条」提示块稍微收紧 */
+.vp-doc .custom-block.tip {
+  margin-top: 16px;
+}
