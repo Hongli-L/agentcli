@@ -58,7 +58,12 @@ class StreamingConsoleListenerTest {
         String out = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(out.contains("本回合"), out);
         assertTrue(out.contains("100"), out);
-        assertTrue(out.contains("⏱"), out);
+        // 耗时符号按终端编码降级：非 ASCII 环境才是 ⏱，GBK/ASCII 环境是纯文本「耗时」
+        if (com.agentcli.common.Symbols.ascii()) {
+            assertTrue(out.contains("耗时"), out);
+        } else {
+            assertTrue(out.contains("\u23F1"), out);
+        }
         // 小结必须出现在回答正文之后，而不是穿插在流式输出里
         assertTrue(out.indexOf("the answer") < out.indexOf("本回合"), out);
     }

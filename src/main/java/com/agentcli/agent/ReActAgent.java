@@ -155,15 +155,31 @@ public class ReActAgent {
     }
 
     public String run(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
+        return run(LlmClient.Message.user(userInput));
+    }
+
+    /**
+     * 执行一轮 Agent 对话。接受已组装好的用户消息（可能携带多模态图片部件）。
+     *
+     * <p><b>多模态历史策略</b>：图片 base64 仅在「首轮发给模型的消息」里携带；落盘进
+     * {@code conversationHistory} 的是 {@link LlmClient.Message#toTextOnly()} 纯文本版本，
+     * 后续轮（含工具循环、续轮对话）不再重复发送同一张图片——既省 token（呼应 v0.26 成本展示），
+     * 也避免撑爆上下文窗口。无图片时 {@code toTextOnly} 是自身、行为与原 {@code run(String)} 完全一致。
+     */
+    public String run(LlmClient.Message userMessage) {
+        if (userMessage == null || userMessage.isBlankTurn()) {
             return "";
         }
-        log.info("ReAct run started: inputLength={}", userInput.length());
-        this.lastUserQuery = userInput;
+        log.info("ReAct run started: hasImageParts={}", userMessage.hasImageParts());
+        this.lastUserQuery = userMessage.textContent();
         long startNanos = System.nanoTime();
         memoryManager.setProjectPath(toolRegistry.getProjectPath());
-        updateSystemPrompt(userInput);
-        conversationHistory.add(LlmClient.Message.user(userInput));
+        updateSystemPrompt(lastUserQuery);
+        // 历史落盘用纯文本版本（无图片时即自身）。
+        conversationHistory.add(userMessage.toTextOnly());
+
+        boolean hasImages = userMessage.hasImageParts();
+        boolean firstCall = true;
 
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
 
@@ -189,15 +205,25 @@ public class ReActAgent {
             maybeCompactHistory();
 
             try {
+                List<LlmClient.Message> messagesForCall;
+                if (firstCall && hasImages) {
+                    // 首轮：把刚落盘的历史用户消息临时替换为带图片部件的版本，仅此一次发送图片。
+                    messagesForCall = new ArrayList<>(conversationHistory);
+                    messagesForCall.set(messagesForCall.size() - 1, userMessage);
+                } else {
+                    messagesForCall = conversationHistory;
+                }
+
                 List<LlmClient.Tool> toolDefinitions = llmClient.supportsTools()
                         ? toolRegistry.getToolDefinitions()
                         : null;
 
                 LlmClient.ChatResponse response = llmClient.chat(
-                        conversationHistory,
+                        messagesForCall,
                         toolDefinitions,
                         listener
                 );
+                firstCall = false;
 
                 budget.recordTokens(
                         response.inputTokens(),

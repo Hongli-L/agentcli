@@ -78,6 +78,12 @@ final class CliCommandParser {
                 || trimmed.equals("?") || trimmed.equals("/?")) {
             return new ParsedCommand(CommandType.HELP, null);
         }
+        if (trimmed.regionMatches(true, 0, "/help ", 0, 6)) {
+            return new ParsedCommand(CommandType.HELP, trimmed.substring(6).trim());
+        }
+        if (trimmed.regionMatches(true, 0, "help ", 0, 5)) {
+            return new ParsedCommand(CommandType.HELP, trimmed.substring(5).trim());
+        }
         if (trimmed.equalsIgnoreCase("/compact")) {
             return new ParsedCommand(CommandType.COMPACT, null);
         }

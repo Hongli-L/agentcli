@@ -43,12 +43,15 @@ public interface LlmClient {
         return PromptCacheMode.NONE;
     }
 
-    /** 对话消息。text-only：仅承载文本内容与工具调用协议字段。 */
+    /**
+     * 对话消息。除纯文本外，user 角色可携带多模态内容部件（{@link ContentPart}），
+     * 如图片附件——用于「贴图让 agent 看」的场景。
+     */
     record Message(String role, String content, String reasoningContent,
-                   List<ToolCall> toolCalls, String toolCallId) {
+                   List<ToolCall> toolCalls, String toolCallId, List<ContentPart> parts) {
 
         public Message(String role, String content) {
-            this(role, content, null, null, null);
+            this(role, content, null, null, null, null);
         }
 
         public static Message system(String content) {
@@ -59,24 +62,93 @@ public interface LlmClient {
             return new Message("user", content);
         }
 
+        /** 多模态用户消息：文本 + 图片部件由上层（ImageMentionParser）组装。 */
+        public static Message user(List<ContentPart> parts) {
+            return new Message("user", null, null, null, null, parts);
+        }
+
         public static Message assistant(String content) {
             return new Message("assistant", content);
         }
 
         public static Message assistant(String reasoningContent, String content) {
-            return new Message("assistant", content, reasoningContent, null, null);
+            return new Message("assistant", content, reasoningContent, null, null, null);
         }
 
         public static Message assistant(String content, List<ToolCall> toolCalls) {
-            return new Message("assistant", content, null, toolCalls, null);
+            return new Message("assistant", content, null, toolCalls, null, null);
         }
 
         public static Message assistant(String reasoningContent, String content, List<ToolCall> toolCalls) {
-            return new Message("assistant", content, reasoningContent, toolCalls, null);
+            return new Message("assistant", content, reasoningContent, toolCalls, null, null);
         }
 
         public static Message tool(String toolCallId, String content) {
-            return new Message("tool", content, null, null, toolCallId);
+            return new Message("tool", content, null, null, toolCallId, null);
+        }
+
+        /** 是否携带图片部件（upload 时决定是否用多部分内容数组）。 */
+        public boolean hasImageParts() {
+            return parts != null && parts.stream().anyMatch(ContentPart::isImage);
+        }
+
+        /** 提取纯文本：优先拼接文本部件，否则回退 content。 */
+        public String textContent() {
+            if (parts != null && !parts.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (ContentPart p : parts) {
+                    if (!p.isImage() && p.text() != null) {
+                        sb.append(p.text());
+                    }
+                }
+                return sb.toString();
+            }
+            return content == null ? "" : content;
+        }
+
+        /**
+         * 转为纯文本版本：丢弃图片部件（仅保留文本），供历史落盘复用——
+         * 避免每轮对话都把同一张 base64 图片重新发送给模型（既贵又撑爆上下文）。
+         */
+        public Message toTextOnly() {
+            if (!hasImageParts()) {
+                return this;
+            }
+            return new Message(role, textContent(), reasoningContent, toolCalls, toolCallId, null);
+        }
+
+        /** 判断本轮是否为空（无文本且无图片）。 */
+        public boolean isBlankTurn() {
+            if (hasImageParts()) {
+                return false;
+            }
+            String t = content == null ? "" : content;
+            return t.isBlank();
+        }
+    }
+
+    /**
+     * 消息内容部件：支持文本与图片。图片以 data URI（{@code data:<mime>;base64,<b64>}）形式携带，
+     * 可直接映射到 OpenAI 兼容 vision 协议的 {@code image_url.url} 字段。
+     */
+    record ContentPart(String type, String text, String imageUrl, String mimeType) {
+
+        public static ContentPart text(String text) {
+            return new ContentPart("text", text, null, null);
+        }
+
+        public static ContentPart imageUrl(String url) {
+            return new ContentPart("image_url", null, url, null);
+        }
+
+        public static ContentPart imageBase64(String base64, String mimeType) {
+            String safeMime = mimeType == null || mimeType.isBlank() ? "image/png" : mimeType;
+            String url = "data:" + safeMime + ";base64," + base64;
+            return new ContentPart("image_url", null, url, safeMime);
+        }
+
+        public boolean isImage() {
+            return "image_url".equals(type);
         }
     }
 

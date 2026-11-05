@@ -140,9 +140,14 @@ class TokenUsageFormatterTest {
         assertTrue(text.contains("10,000"), text);
         assertTrue(text.contains("2,000"), text);
         assertTrue(text.contains("4,000"), text);
-        assertTrue(text.contains("估算"), text);
-        assertTrue(text.contains("¥"), text);
-        assertTrue(text.contains("⏱"), text);
+        assertTrue(text.contains("缓存"), text);
+        // 10,000 输入 / 4,000 缓存 -> 40% 命中（一等信号，替代原先的"估算"金额）
+        assertTrue(text.contains("40%"), text);
+        if (com.agentcli.common.Symbols.ascii()) {
+            assertTrue(text.contains("耗时"), text);
+        } else {
+            assertTrue(text.contains("\u23F1"), text);
+        }
         assertTrue(text.contains("1.23"), text); // 1234ms -> 1.23s
         assertTrue(text.contains("deepseek"), text);
     }

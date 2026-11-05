@@ -101,6 +101,16 @@ public final class AnsiStyle {
         return 141;
     }
 
+    /** 危险命令高亮色（红 31），配合 bold 使用，供 {@link com.agentcli.common.AgentCliHighlighter} 复用。 */
+    public static int dangerColor() {
+        return 31;
+    }
+
+    /** 密钥/敏感字段高亮色（黄 33），配合 bold 使用，供 {@link com.agentcli.common.AgentCliHighlighter} 复用。 */
+    public static int secretColor() {
+        return 33;
+    }
+
     private static String wrap(String prefix, String text) {
         if (!ENABLED || text == null || text.isEmpty()) {
             return text;

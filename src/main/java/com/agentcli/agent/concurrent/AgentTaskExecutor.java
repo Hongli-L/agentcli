@@ -1,5 +1,6 @@
 package com.agentcli.agent.concurrent;
 
+import com.agentcli.common.Symbols;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +60,7 @@ public final class AgentTaskExecutor implements AutoCloseable {
     public static final String CANCELLED_RESULT = "⏹️ 已取消当前任务。";
 
     /** 超时任务的降级返回值。 */
-    public static final String TIMEOUT_RESULT = "⏱️ 任务超时，已回收。";
+    public static final String TIMEOUT_RESULT = Symbols.stopwatch() + "任务超时，已回收。";
 
     /** 失败任务的降级返回值前缀。 */
     public static final String FAILED_PREFIX = "❌ 任务失败: ";

@@ -31,6 +31,7 @@ import com.agentcli.tool.builtin.LoadSkillTool;
 import java.io.PrintStream;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.SQLException;
 
 /**
@@ -162,7 +163,9 @@ public final class Launcher {
         ReplReader input = ReplReader.create(consoleCharset, consoleOut, enh);
         // v0.14.0：MCP 通知打印通道（复用 ReplReader.printAsync，安全不抢输入）+ REPL 自由文本 @mention 解析器
         mcpManager.setNotificationPrinter(input::printAsync);
-        session.setMentionResolver(new MentionResolver(Path.of(projectPath)));
+        String home = System.getProperty("user.home");
+        Path homePath = (home == null || home.isEmpty()) ? null : Paths.get(home);
+        session.setMentionResolver(new MentionResolver(Path.of(projectPath), homePath));
         session.run(input, consoleOut);
     }
 

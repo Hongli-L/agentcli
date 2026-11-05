@@ -5,6 +5,7 @@ import com.agentcli.agent.concurrent.AgentTaskExecutor;
 import com.agentcli.agent.concurrent.AgentTaskState;
 import com.agentcli.agent.concurrent.AgentTaskView;
 import com.agentcli.audit.OrchestrationTrace;
+import com.agentcli.common.Symbols;
 import com.agentcli.agent.concurrent.CancellationScope;
 import com.agentcli.agent.concurrent.CancellationToken;
 import com.agentcli.llm.LlmClient;
@@ -255,7 +256,7 @@ public final class AgentOrchestrator implements AutoCloseable {
             while (guard-- > 0) {
                 if (stopRequested(token, deadline)) {
                     if (System.currentTimeMillis() >= deadline) {
-                        out.println("⏱️ 已达全局编排预算，停止派发新任务。");
+                        out.println(Symbols.stopwatch() + "已达全局编排预算，停止派发新任务。");
                         // 全局熔断：已在跑的任务一并取消，避免线程悬空
                         token.cancel();
                     }

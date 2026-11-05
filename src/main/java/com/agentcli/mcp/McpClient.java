@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -51,7 +52,9 @@ public class McpClient implements AutoCloseable {
         this.serverName = serverName;
         this.transport = transport;
         this.rpc = new JsonRpcClient(transport);
-        this.mentionResolver = projectDir != null ? new MentionResolver(projectDir) : null;
+        String home = System.getProperty("user.home");
+        Path homePath = (home == null || home.isEmpty()) ? null : Paths.get(home);
+        this.mentionResolver = projectDir != null ? new MentionResolver(projectDir, homePath) : null;
         this.notificationDispatcher = presenter != null
                 ? new NotificationDispatcher(serverName, presenter) : null;
     }

@@ -22,6 +22,10 @@ class AgentCliHighlighterTest {
         return AttributedStyle.DEFAULT.foreground(color);
     }
 
+    private static AttributedStyle fgBold(int color) {
+        return AttributedStyle.DEFAULT.foreground(color).bold();
+    }
+
     @Test
     void disabledReturnsOriginalBuffer() {
         AgentCliHighlighter hl = new AgentCliHighlighter(false);
@@ -100,5 +104,87 @@ class AgentCliHighlighterTest {
         int badStart = buffer.indexOf("bad");
         assertEquals(fg(31), result.styleAt(badStart),
                 "pattern-matched char should be red");
+    }
+
+    @Test
+    void dangerCommandRmRfIsHighlightedBoldRed() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "rm -rf /tmp/foo";
+        AttributedString result = hl.highlight(null, buffer);
+        int rmStart = buffer.indexOf("rm");
+        assertEquals(fgBold(AnsiStyle.dangerColor()), result.styleAt(rmStart),
+                "rm -rf should be bold-red (danger)");
+        int dashRf = buffer.indexOf("-rf");
+        assertEquals(fgBold(AnsiStyle.dangerColor()), result.styleAt(dashRf),
+                "-rf flag should be bold-red (danger)");
+    }
+
+    @Test
+    void sudoIsHighlightedBoldRed() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "sudo rm file";
+        AttributedString result = hl.highlight(null, buffer);
+        int sudoStart = buffer.indexOf("sudo");
+        assertEquals(fgBold(AnsiStyle.dangerColor()), result.styleAt(sudoStart),
+                "sudo should be bold-red (danger)");
+    }
+
+    @Test
+    void secretAssignmentIsHighlightedBoldYellow() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "export API_KEY=abc123";
+        AttributedString result = hl.highlight(null, buffer);
+        int keyStart = buffer.indexOf("API_KEY");
+        assertEquals(fgBold(AnsiStyle.secretColor()), result.styleAt(keyStart),
+                "API_KEY=... assignment should be bold-yellow (secret)");
+        int valStart = buffer.indexOf("abc123");
+        assertEquals(fgBold(AnsiStyle.secretColor()), result.styleAt(valStart),
+                "secret value should also be bold-yellow");
+    }
+
+    @Test
+    void bearerTokenIsHighlightedBoldYellow() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "Authorization: Bearer eyJabc.def";
+        AttributedString result = hl.highlight(null, buffer);
+        int bearerStart = buffer.indexOf("Bearer");
+        assertEquals(fgBold(AnsiStyle.secretColor()), result.styleAt(bearerStart),
+                "Bearer token should be bold-yellow (secret)");
+    }
+
+    @Test
+    void unclosedQuoteIsHighlightedBoldRed() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "echo \"unterminated";
+        AttributedString result = hl.highlight(null, buffer);
+        int quoteStart = buffer.indexOf('"');
+        assertEquals(fgBold(AnsiStyle.dangerColor()), result.styleAt(quoteStart),
+                "unclosed quote should be bold-red (danger)");
+        int contentStart = buffer.indexOf("unterminated");
+        assertEquals(fgBold(AnsiStyle.dangerColor()), result.styleAt(contentStart),
+                "unclosed quote content should be bold-red");
+    }
+
+    @Test
+    void safeCommandNotDangerouslyColored() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        String buffer = "git status";
+        AttributedString result = hl.highlight(null, buffer);
+        for (int i = 0; i < result.length(); i++) {
+            assertFalse(result.styleAt(i).equals(fgBold(AnsiStyle.dangerColor())),
+                    "char at " + i + " must not be danger-colored");
+            assertFalse(result.styleAt(i).equals(fgBold(AnsiStyle.secretColor())),
+                    "char at " + i + " must not be secret-colored");
+        }
+    }
+
+    @Test
+    void errorOutranksDangerColoring() {
+        AgentCliHighlighter hl = new AgentCliHighlighter(true);
+        hl.setErrorIndex(0); // 命中 rm 的 'r'
+        String buffer = "rm -rf /tmp/foo";
+        AttributedString result = hl.highlight(null, buffer);
+        assertEquals(fg(31), result.styleAt(0),
+                "explicit error index should win over danger (plain red, not bold)");
     }
 }

@@ -19,6 +19,7 @@ import com.agentcli.llm.LlmClient;
 import com.agentcli.llm.LlmClientFactory;
 import com.agentcli.llm.PromptCacheMode;
 import com.agentcli.mcp.McpServerManager;
+import com.agentcli.mcp.mention.ImageMentionParser;
 import com.agentcli.mcp.mention.MentionResolver;
 import com.agentcli.memory.MemoryEntry;
 import com.agentcli.plan.PlanExecuteAgent;
@@ -37,6 +38,7 @@ import com.agentcli.tool.ToolRegistry;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -154,11 +156,17 @@ public class InteractiveSession {
                 }
 
                 // v0.14.0：仅对自然语言轮（NONE）解析 @mention；/命令 轮不解析以免破坏命令语法。
-                if (command.type() == CliCommandParser.CommandType.NONE && mentionResolver != null) {
-                    line = mentionResolver.resolve(line);
+                if (command.type() == CliCommandParser.CommandType.NONE) {
+                    if (mentionResolver != null) {
+                        line = mentionResolver.resolve(line);
+                    }
+                    // v0.26.0：把 @image:<path> / @clipboard 转成多模态用户消息（无图片时退回纯文本，行为不变）。
+                    Path baseDir = projectBaseDir();
+                    LlmClient.Message userMsg = ImageMentionParser.userMessage(line, baseDir, mentionResolver);
+                    runTurn(userMsg, out);
+                } else {
+                    runTurn(line, out);
                 }
-
-                runTurn(line, out);
             }
         } finally {
             if (lspManager != null) {
@@ -171,7 +179,7 @@ public class InteractiveSession {
         }
     }
 
-    /** 执行一轮 Agent 对话并输出到终端。 */
+    /** 执行一轮 Agent 对话并输出到终端（纯文本用户输入）。 */
     public void runTurn(String userInput, PrintStream out) {
         StreamingConsoleListener listener = new StreamingConsoleListener(out);
         agent.setListener(listener);
@@ -181,6 +189,24 @@ public class InteractiveSession {
         if (!streamed && response != null && !response.isBlank()) {
             out.println(response);
         }
+    }
+
+    /** 执行一轮 Agent 对话（多模态用户消息，如携带 @image 图片部件）。 */
+    public void runTurn(LlmClient.Message userMessage, PrintStream out) {
+        StreamingConsoleListener listener = new StreamingConsoleListener(out);
+        agent.setListener(listener);
+        String response = agent.run(userMessage);
+        boolean streamed = listener.hasStreamedContent();
+        listener.finishTurn();
+        if (!streamed && response != null && !response.isBlank()) {
+            out.println(response);
+        }
+    }
+
+    /** 图片 @mention 的相对路径解析基目录（项目根）；未配置时返回 null，由解析器退化为 user.dir。 */
+    private Path projectBaseDir() {
+        String pp = agent.getToolRegistry().getProjectPath();
+        return pp == null ? null : Path.of(pp);
     }
 
     /**
@@ -198,7 +224,7 @@ public class InteractiveSession {
                 yield true;
             }
             case HELP -> {
-                printSessionHelp(out);
+                printSessionHelp(out, command.payload());
                 yield true;
             }
             case MODEL -> {
@@ -753,41 +779,76 @@ public class InteractiveSession {
         out.println(AnsiStyle.subtle("输入 /help 查看命令，/exit 退出。"));
     }
 
+    /** 帮助条目：命令文本 + 描述。 */
+    private record HelpEntry(String command, String desc) {}
+
+    /** 打印完整会话帮助（无关键词过滤）。 */
     static void printSessionHelp(PrintStream out) {
+        printSessionHelp(out, null);
+    }
+
+    /**
+     * 打印会话帮助；keyword 非空时仅显示命令或描述中包含该关键词的条目（大小写不敏感）。
+     */
+    static void printSessionHelp(PrintStream out, String keyword) {
+        List<HelpEntry> slash = List.of(
+                new HelpEntry("/help, /?", "显示本帮助"),
+                new HelpEntry("/clear", "清空当前对话历史"),
+                new HelpEntry("/model [provider]", "查看或切换模型 (glm/deepseek/openai)"),
+                new HelpEntry("/memory, /mem", "查看记忆状态"),
+                new HelpEntry("/memory list", "列出长期记忆"),
+                new HelpEntry("/memory search Q", "搜索长期记忆"),
+                new HelpEntry("/memory delete ID", "删除指定记忆"),
+                new HelpEntry("/memory clear", "清空长期记忆"),
+                new HelpEntry("/status", "查看会话上下文画像（模型/工具/记忆/token）"),
+                new HelpEntry("/usage", "查看累计 token 用量与费用估算"),
+                new HelpEntry("/compact", "手动压缩对话历史"),
+                new HelpEntry("/hitl [on|off|clear]", "查看/切换/重置人工审批"),
+                new HelpEntry("/plan <目标>", "先规划再分步执行复杂任务"),
+                new HelpEntry("/plan resume", "恢复最近一个未完成的 plan 并续跑"),
+                new HelpEntry("/team <目标>", "多 Agent 并行协作完成目标并复核结果"),
+                new HelpEntry("/tasks", "查看编排任务状态"),
+                new HelpEntry("/cancel [任务ID]", "取消全部 / 指定编排任务"),
+                new HelpEntry("/mcp [status|logs]", "MCP 服务器状态与日志"),
+                new HelpEntry("/audit [数量]", "查看最近的 LLM 调用与审批审计记录"),
+                new HelpEntry("/skill [list]", "列出已加载 skill 与启用状态"),
+                new HelpEntry("/skill show <name>", "查看某个 skill 的完整 SKILL.md"),
+                new HelpEntry("/skill on/off <name>", "启用 / 禁用某个 skill"),
+                new HelpEntry("/skill reload", "重新扫描 skill 目录"),
+                new HelpEntry("/lsp [start|stop|status|diagnostics|config]", "LSP 诊断集成"),
+                new HelpEntry("/index [路径]", "建立/重建代码语义索引与类关系图谱"),
+                new HelpEntry("/search <自然语言>", "语义 + 关键词混合检索代码"),
+                new HelpEntry("/graph <类名>", "查看类的继承/实现/包含/调用关系"),
+                new HelpEntry("/exit, /quit", "退出交互模式"));
+        List<HelpEntry> args = List.of(
+                new HelpEntry("-p, --prompt TEXT", "单次提问后退出"),
+                new HelpEntry("--provider NAME", "指定默认模型 provider"),
+                new HelpEntry("--project, -C DIR", "指定项目根目录"));
         out.println();
-        out.println("斜杠命令:");
-        out.println("  /help, /?          显示本帮助");
-        out.println("  /clear             清空当前对话历史");
-        out.println("  /model [provider]  查看或切换模型 (glm/deepseek/openai)");
-        out.println("  /memory, /mem       查看记忆状态");
-        out.println("  /memory list        列出长期记忆");
-        out.println("  /memory search Q    搜索长期记忆");
-        out.println("  /memory delete ID   删除指定记忆");
-        out.println("  /memory clear       清空长期记忆");
-        out.println("  /status             查看会话上下文画像（模型/工具/记忆/token）");
-        out.println("  /usage              查看累计 token 用量与费用估算");
-        out.println("  /compact            手动压缩对话历史");
-        out.println("  /hitl [on|off|clear] 查看/切换/重置人工审批");
-        out.println("  /plan <目标>         先规划再分步执行复杂任务");
-        out.println("  /plan resume         恢复最近一个未完成的 plan 并续跑");
-        out.println("  /team <目标>         多 Agent 并行协作完成目标并复核结果");
-        out.println("  /tasks               查看编排任务状态");
-        out.println("  /cancel [任务ID]     取消全部 / 指定编排任务");
-        out.println("  /mcp [status|logs]   MCP 服务器状态与日志");
-        out.println("  /audit [数量]        查看最近的 LLM 调用与审批审计记录");
-        out.println("  /skill [list]        列出已加载 skill 与启用状态");
-        out.println("  /skill show <name>   查看某个 skill 的完整 SKILL.md");
-        out.println("  /skill on/off <name> 启用 / 禁用某个 skill");
-        out.println("  /skill reload         重新扫描 skill 目录");
-        out.println("  /lsp [start|stop|status|diagnostics|config]  LSP 诊断集成");
-        out.println("  /index [路径]        建立/重建代码语义索引与类关系图谱");
-        out.println("  /search <自然语言>   语义 + 关键词混合检索代码");
-        out.println("  /graph <类名>        查看类的继承/实现/包含/调用关系");
-        out.println("  /exit, /quit       退出交互模式");
-        out.println();
-        out.println("启动参数:");
-        out.println("  -p, --prompt TEXT  单次提问后退出");
-        out.println("  --provider NAME    指定默认模型 provider");
-        out.println("  --project, -C DIR  指定项目根目录");
+        printHelpSection(out, "斜杠命令:", slash, keyword);
+        printHelpSection(out, "启动参数:", args, keyword);
+    }
+
+    private static void printHelpSection(PrintStream out, String header, List<HelpEntry> entries, String keyword) {
+        List<HelpEntry> matched = (keyword == null || keyword.isBlank())
+                ? entries
+                : entries.stream().filter(e -> helpMatches(e, keyword)).toList();
+        if (matched.isEmpty()) {
+            if (keyword != null && !keyword.isBlank()) {
+                out.println(AnsiStyle.subtle("没有匹配 \"" + keyword + "\" 的命令。输入 /help 查看全部。"));
+            }
+            return;
+        }
+        out.println(header);
+        int width = entries.stream().mapToInt(e -> e.command().length()).max().orElse(0);
+        for (HelpEntry e : matched) {
+            int pad = Math.max(2, width - e.command().length() + 2);
+            out.println("  " + e.command() + " ".repeat(pad) + e.desc());
+        }
+    }
+
+    private static boolean helpMatches(HelpEntry e, String keyword) {
+        String k = keyword.toLowerCase();
+        return e.command().toLowerCase().contains(k) || e.desc().toLowerCase().contains(k);
     }
 }

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -133,5 +134,77 @@ public class MentionResolverTest {
     void resolveJsonWithoutMentionReturnsOriginal() {
         String json = "{\"q\":\"plain\",\"n\":2}";
         assertEquals(json, resolver().resolveJson(json));
+    }
+
+    @Test
+    void resolvesAbsolutePathInsideExtraRoot() throws IOException {
+        Path extra = projectDir.resolve("..").resolve("extraRoot").toAbsolutePath().normalize();
+        Files.createDirectories(extra);
+        Path file = extra.resolve("note.txt");
+        Files.writeString(file, "extra body");
+        MentionResolver r = new MentionResolver(projectDir, extra);
+        String out = r.resolve("see @" + file);
+        assertTrue(out.contains("<file path="), out);
+        assertTrue(out.contains("note.txt"), out);
+        assertTrue(out.contains("extra body"), out);
+        // 额外根非 home，relPath 用相对额外根、不带 ~/ 前缀
+        assertFalse(out.contains("~/"), out);
+    }
+
+    @Test
+    void tildeUnderHomeUsesTildePrefix() throws IOException {
+        Path home = projectDir.resolve("..").resolve("fakeHome").toAbsolutePath().normalize();
+        Files.createDirectories(home);
+        Path file = home.resolve("Desktop").resolve("foo.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "class Foo {}");
+        String prev = System.setProperty("user.home", home.toString());
+        try {
+            MentionResolver r = new MentionResolver(projectDir, home);
+            String out = r.resolve("open @~/Desktop/foo.java");
+            assertTrue(out.contains("<file path=\"~/Desktop/foo.java\">"), out);
+            assertTrue(out.contains("class Foo {}"), out);
+        } finally {
+            System.setProperty("user.home", prev);
+        }
+    }
+
+    @Test
+    void tildeSensitivePathUnderHomeBlocked() throws IOException {
+        Path home = projectDir.resolve("..").resolve("fakeHome2").toAbsolutePath().normalize();
+        Files.createDirectories(home);
+        Path secret = home.resolve(".ssh").resolve("id_rsa");
+        Files.createDirectories(secret.getParent());
+        Files.writeString(secret, "PRIVATE KEY");
+        String prev = System.setProperty("user.home", home.toString());
+        try {
+            MentionResolver r = new MentionResolver(projectDir, home);
+            String out = r.resolve("read @~/.ssh/id_rsa");
+            assertTrue(out.contains("[mention error:"), out);
+            assertFalse(out.contains("PRIVATE KEY"), out);
+            assertTrue(out.contains("sensitive"), out);
+        } finally {
+            System.setProperty("user.home", prev);
+        }
+    }
+
+    @Test
+    void extraRootDoesNotLeakOutsideItsBoundary() throws IOException {
+        Path extra = projectDir.resolve("..").resolve("extraRoot2").toAbsolutePath().normalize();
+        Files.createDirectories(extra);
+        Path outside = projectDir.resolve("..").resolve("outsideRoot.txt").toAbsolutePath().normalize();
+        Files.writeString(outside, "x");
+        MentionResolver r = new MentionResolver(projectDir, extra);
+        String out = r.resolve("oops @" + outside);
+        assertTrue(out.contains("[mention error:"), out);
+        assertFalse(out.contains("<file"), out);
+    }
+
+    @Test
+    void friendlyReasonWhenBlockedWithoutExtraRoots() {
+        // 默认构造（无额外根）：~/x 展开到真实 home，不在项目内 -> 拒，原因可读
+        String out = resolver().resolve("oops @~/x");
+        assertTrue(out.contains("[mention error:"), out);
+        assertTrue(out.contains("项目目录") || out.contains("主目录"), out);
     }
 }

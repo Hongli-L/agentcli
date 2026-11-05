@@ -229,7 +229,7 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
                 inputTokens, outputTokens, cachedInputTokens);
     }
 
-    private ObjectNode buildRequestBody(List<Message> messages, List<Tool> tools) {
+    protected ObjectNode buildRequestBody(List<Message> messages, List<Tool> tools) {
         ObjectNode requestBody = MAPPER.createObjectNode();
         requestBody.put("model", getModel());
         requestBody.put("stream", true);
@@ -238,7 +238,26 @@ public abstract class OpenAiCompatibleClient implements LlmClient {
         for (Message msg : messages) {
             ObjectNode msgNode = messagesArray.addObject();
             msgNode.put("role", msg.role());
-            msgNode.put("content", msg.content() == null ? "" : msg.content());
+
+            // 多模态：user 消息可能携带文本 + 图片部件，序列化为 content 数组；
+            // 其余消息（system/assistant/tool）一律纯文本字符串。
+            List<LlmClient.ContentPart> parts = msg.parts();
+            if (parts != null && !parts.isEmpty()) {
+                ArrayNode contentParts = msgNode.putArray("content");
+                for (LlmClient.ContentPart part : parts) {
+                    ObjectNode partNode = contentParts.addObject();
+                    if (part.isImage()) {
+                        partNode.put("type", "image_url");
+                        ObjectNode imageUrlNode = partNode.putObject("image_url");
+                        imageUrlNode.put("url", part.imageUrl() == null ? "" : part.imageUrl());
+                    } else {
+                        partNode.put("type", "text");
+                        partNode.put("text", part.text() == null ? "" : part.text());
+                    }
+                }
+            } else {
+                msgNode.put("content", msg.content() == null ? "" : msg.content());
+            }
 
             if (shouldSendReasoningContentInRequestHistory()
                     && "assistant".equals(msg.role())

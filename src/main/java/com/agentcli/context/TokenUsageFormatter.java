@@ -2,6 +2,7 @@ package com.agentcli.context;
 
 import com.agentcli.common.AnsiStyle;
 import com.agentcli.common.EnvLoader;
+import com.agentcli.common.Symbols;
 
 import java.util.Locale;
 
@@ -64,16 +65,21 @@ public final class TokenUsageFormatter {
     public static String formatPerTurn(String provider, String model,
                                         int inputTokens, int outputTokens, int cachedInputTokens,
                                         long elapsedMillis) {
-        double cost = estimatedCostCny(provider, inputTokens, outputTokens, cachedInputTokens);
-        double seconds = elapsedMillis / 1000.0;
-        return AnsiStyle.subtle("📊 本回合 ")
-                + "输入 " + formatNumber(Math.max(0, inputTokens))
-                + " / 输出 " + formatNumber(Math.max(0, outputTokens))
-                + " / 缓存 " + formatNumber(Math.max(0, cachedInputTokens))
-                + AnsiStyle.subtle("　估算 ")
-                + AnsiStyle.emphasis(String.format(Locale.ROOT, "¥%.4f", cost))
-                + AnsiStyle.subtle("　⏱ ")
-                + String.format(Locale.ROOT, "%.2f", seconds) + "s"
+        int input = Math.max(0, inputTokens);
+        int output = Math.max(0, outputTokens);
+        int cached = Math.min(Math.max(0, cachedInputTokens), input);
+        // GBK 控制台编不出 📊 / ⏱ / ¥，JDK 会替换成 '?'，这里按终端能力降级为纯文本（见 Symbols）。
+        // 缓存命中率是缓存优化的一等信号：重度 agent 会话里 90%+ 的 token 是 cache read，
+        // 比"花了多少钱"更可行动；金额只保留在 /usage 显式报表里，不打扰每轮输出。
+        String cachedText = cached > 0
+                ? formatNumber(cached) + String.format(Locale.ROOT, " (%.0f%%)", cached * 100.0 / input)
+                : formatNumber(cached);
+        return AnsiStyle.subtle(Symbols.chart() + "本回合 ")
+                + "输入 " + formatNumber(input)
+                + " / 输出 " + formatNumber(output)
+                + " / 缓存 " + cachedText
+                + AnsiStyle.subtle(Symbols.ascii() ? "　耗时 " : "　" + Symbols.stopwatch())
+                + String.format(Locale.ROOT, "%.2f", elapsedMillis / 1000.0) + "s"
                 + AnsiStyle.subtle("　(" + (provider == null ? "?" : provider) + "/" + (model == null ? "?" : model) + ")");
     }
 
