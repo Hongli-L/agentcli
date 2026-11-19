@@ -10,30 +10,30 @@
 | 机器 | `<待填：CPU 型号 / 内存 / 网络环境>` |
 | 操作系统 | Windows 11 10.0 / amd64 / 16 逻辑核 |
 | JDK | 17.0.18 |
-| embedding 模型 | `<待填：跑通后自动记录>` ⏳ 待 key |
+| embedding 模型 | 见下方 rag_search 备注 |
 | 对话模型 | `<待填：仅成本换算需要，本基准只统计 token 不折算金额>` |
 | 样本量 | 10 条「问题 → 期望命中文件」 |
-| 运行日期 | 2026-09-09 07:53（脚本自动记录；如需归档请另注 `<日期占位>`） |
+| 运行日期 | 2026-11-19 20:41（脚本自动记录；如需归档请另注 `<日期占位>`） |
 | 检索范围 | `src/main/java/com/agentcli`（两条路径完全一致） |
 
 ## 结果总表
 
 | 指标 | grep_code（关键词） | rag_search（语义 + 混合） |
 |---|---|---|
-| top-5 命中率 | 8/10 = 80.0% | ⏳ 待 key |
-| 平均注入 tokens / 问 | 1336 | ⏳ 待 key |
-| 备注 | engine=java | ⏳ rag_search 需 LLM key，已跳过 |
+| top-5 命中率 | 8/10 = 80.0% | 8/10 = 80.0% |
+| 平均注入 tokens / 问 | 1336 | 1872 |
+| 备注 | engine=java | index=2018 块, model=embedding-3, 全程语义混合未降级 |
 
-**检索准确率收益**：⏳ 待 key —— `rag_search` 一列跑通后才能给出对比差值，当前只有关键词基线可用。
+**检索准确率收益**：80.0% → 80.0%，绝对提升 0.0 个百分点。
 
 ## 上下文成本对比
 
 | 方案 | 估算 token | 说明 |
 |---|---|---|
 | 整库全量塞入上下文 | 254872 | 198 个 `.java`，共 941810 字符 |
-| 先检索 top-5 再注入 | 1336 | 每问平均，数据来源：grep_code（关键词） |
+| 先检索 top-5 再注入 | 1872 | 每问平均，数据来源：rag_search（语义 + 混合） |
 
-**单次提问上下文 token 降低 99.5%**（254872 → 1336）。
+**单次提问上下文 token 降低 99.3%**（254872 → 1872）。
 
 > token 估算口径：复用 `MemoryEntry.estimateTokens`（中文约 1.5 字/token，其余约 4 字符/token），**不折算金额**，避免把汇率与厂商定价写死进结论。
 
@@ -58,20 +58,18 @@
 
 ### rag_search（语义 + 混合）
 
-⏳ rag_search 需 LLM key，已跳过
-
-| # | 问题 | 期望命中文件 |
-|---|---|---|
-| 1 | ReAct 循环在哪实现 | `agent/ReActAgent.java` |
-| 2 | MCP 客户端怎么连 | `mcp/McpClient.java` |
-| 3 | SSRF 围栏怎么实现的 | `web/NetworkPolicy.java` |
-| 4 | 审计日志装饰器 | `audit/AuditLog.java` |
-| 5 | 三层取消模型 | `agent/concurrent/CancellationToken.java` |
-| 6 | RAG 向量索引 | `rag/CodeRetriever.java` |
-| 7 | LSP 客户端 | `lsp/LspClient.java` |
-| 8 | SQLite 存储 | `store/SqliteStore.java` |
-| 9 | Prompt 分层 | `agent/SystemPrompt.java` |
-| 10 | 多 Agent 并行编排 | `agent/orchestration/AgentOrchestrator.java` |
+| # | 问题 | 期望命中文件 | 命中 | 实际 top-5 |
+|---|---|---|---|---|
+| 1 | ReAct 循环在哪实现 | `agent/ReActAgent.java` | ✅ | `agent/ReActAgent.java`, `agent/orchestration/ReviewerAgent.java`, `agent/AgentBudget.java`, `agent/AgentRunListener.java`, `agent/concurrent/AgentTaskExecutor.java` |
+| 2 | MCP 客户端怎么连 | `mcp/McpClient.java` | ✅ | `cli/InteractiveSession.java`, `context/ContextProfile.java`, `mcp/McpServer.java`, `mcp/McpClient.java`, `mcp/McpServerManager.java` |
+| 3 | SSRF 围栏怎么实现的 | `web/NetworkPolicy.java` | ✅ | `web/NetworkPolicy.java`, `web/WebFetcher.java`, `web/WebFetchService.java`, `tool/builtin/RagSearchTool.java`, `tool/builtin/ExecuteCommandTool.java` |
+| 4 | 审计日志装饰器 | `audit/AuditLog.java` | ✅ | `audit/OrchestrationTrace.java`, `cli/InteractiveSession.java`, `cli/Launcher.java`, `audit/AuditLog.java`, `audit/AuditLlmClient.java` |
+| 5 | 三层取消模型 | `agent/concurrent/CancellationToken.java` | ✅ | `rag/CodeRetriever.java`, `agent/concurrent/AgentTaskExecutor.java`, `cli/CliCommandParser.java`, `agent/ReActAgent.java`, `agent/concurrent/CancellationToken.java` |
+| 6 | RAG 向量索引 | `rag/CodeRetriever.java` | ✅ | `rag/CodeIndex.java`, `agent/orchestration/ReviewerAgent.java`, `agent/orchestration/WorkerAgent.java`, `rag/CodeRetriever.java`, `rag/RagCommandHandler.java` |
+| 7 | LSP 客户端 | `lsp/LspClient.java` | ❌ | `cli/InteractiveSession.java`, `agent/ReActAgent.java`, `cli/Launcher.java`, `lsp/LspServer.java`, `lsp/LspServerManager.java` |
+| 8 | SQLite 存储 | `store/SqliteStore.java` | ❌ | `memory/LongTermMemory.java`, `plan/PlanStore.java`, `audit/AuditLog.java`, `cli/InteractiveSession.java`, `cli/Launcher.java` |
+| 9 | Prompt 分层 | `agent/SystemPrompt.java` | ✅ | `agent/SystemPrompt.java`, `agent/ReActAgent.java`, `agent/orchestration/StepContextBuilder.java`, `agent/orchestration/AgentOrchestrator.java`, `prompt/PromptMode.java` |
+| 10 | 多 Agent 并行编排 | `agent/orchestration/AgentOrchestrator.java` | ✅ | `agent/orchestration/AgentOrchestrator.java`, `agent/AgentBudget.java`, `agent/AgentRunListener.java`, `agent/concurrent/AgentTaskExecutor.java`, `cli/Launcher.java` |
 
 ## 复现方式
 
