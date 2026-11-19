@@ -27,8 +27,9 @@ jobs:
           key: ${{ runner.os }}-m2-${{ hashFiles('pom.xml') }}
           restore-keys: ${{ runner.os }}-m2-
 
-      - name: Build and test
-        run: mvn -B clean package -DskipTests=false -DforkCount=0
+      - name: Build fat-jar
+        # 同一 commit 的 CI 已跑过测试，Release 只负责打包 + 冒烟 + 挂产物，避免重复跑全量测试超时。
+        run: mvn -B clean package -DskipTests
 
       - name: Jar smoke test
         run: java -jar target/agentcli-1.0.0.jar --version
